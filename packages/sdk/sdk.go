@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/akashprasad/file-uploader/packages/adapters/filesystem"
 	"github.com/akashprasad/file-uploader/packages/adapters/gcs"
 	"github.com/akashprasad/file-uploader/packages/adapters/supabase"
 	"github.com/akashprasad/file-uploader/packages/adapters/upstash"
@@ -20,24 +21,27 @@ type Adapter = core.Adapter
 type Provider string
 
 const (
-	ProviderGCS      Provider = "gcs"
-	ProviderSupabase Provider = "supabase"
-	ProviderUpstash  Provider = "upstash"
-	ProviderVercel   Provider = "vercel"
+	ProviderGCS        Provider = "gcs"
+	ProviderFilesystem Provider = "filesystem"
+	ProviderSupabase   Provider = "supabase"
+	ProviderUpstash    Provider = "upstash"
+	ProviderVercel     Provider = "vercel"
 )
 
 type GCSConfig = gcs.Config
+type FilesystemConfig = filesystem.Config
 type SupabaseConfig = supabase.Config
 type UpstashConfig = upstash.Config
 type VercelConfig = vercel.Config
 
 // Config selects a provider and its credentials.
 type Config struct {
-	Provider Provider
-	GCS      *GCSConfig
-	Supabase *SupabaseConfig
-	Upstash  *UpstashConfig
-	Vercel   *VercelConfig
+	Provider   Provider
+	GCS        *GCSConfig
+	Filesystem *FilesystemConfig
+	Supabase   *SupabaseConfig
+	Upstash    *UpstashConfig
+	Vercel     *VercelConfig
 }
 
 // Client uploads files to its configured provider.
@@ -48,6 +52,15 @@ type Client struct {
 // New creates a provider client.
 func New(config Config) (*Client, error) {
 	switch config.Provider {
+	case ProviderFilesystem:
+		if config.Filesystem == nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Vercel != nil {
+			return nil, fmt.Errorf("provide only filesystem configuration when provider is %q", config.Provider)
+		}
+		adapter, err := filesystem.New(*config.Filesystem)
+		if err != nil {
+			return nil, err
+		}
+		return NewWithAdapter(adapter), nil
 	case ProviderGCS:
 		if config.GCS == nil || config.Supabase != nil || config.Upstash != nil || config.Vercel != nil {
 			return nil, fmt.Errorf("provide only GCS configuration when provider is %q", config.Provider)

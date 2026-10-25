@@ -21,26 +21,38 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("uploader", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	bucket := flags.String("bucket", "", "Supabase bucket name")
+	provider := flags.String("provider", "supabase", "upload provider: supabase or filesystem")
+	bucket := flags.String("bucket", "", "bucket name or filesystem subdirectory")
 	key := flags.String("key", "", "object key")
 	filePath := flags.String("file", "", "file to upload")
+	rootDir := flags.String("root-dir", "./uploads", "filesystem provider root directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *bucket == "" || *key == "" || *filePath == "" {
 		return errors.New("usage: go run ./cmd/uploader --bucket BUCKET --key OBJECT_KEY --file PATH")
 	}
-	projectURL := os.Getenv("SUPABASE_PROJECT_URL")
-	apiKey := os.Getenv("SUPABASE_API_KEY")
-	if projectURL == "" || apiKey == "" {
-		return errors.New("set SUPABASE_PROJECT_URL and SUPABASE_API_KEY")
+	var config sdk.Config
+	switch sdk.Provider(*provider) {
+	case sdk.ProviderSupabase:
+		projectURL := os.Getenv("SUPABASE_PROJECT_URL")
+		apiKey := os.Getenv("SUPABASE_API_KEY")
+		if projectURL == "" || apiKey == "" {
+			return errors.New("set SUPABASE_PROJECT_URL and SUPABASE_API_KEY")
+		}
+		supabaseConfig := sdk.SupabaseConfig{ProjectURL: projectURL, APIKey: apiKey}
+		if accessToken := os.Getenv("SUPABASE_ACCESS_TOKEN"); accessToken != "" {
+			supabaseConfig.TokenSource = func(context.Context) (string, error) { return accessToken, nil }
+		}
+		config = sdk.Config{Provider: sdk.ProviderSupabase, Supabase: &supabaseConfig}
+	case sdk.ProviderFilesystem:
+		filesystemConfig := sdk.FilesystemConfig{RootDir: *rootDir}
+		config = sdk.Config{Provider: sdk.ProviderFilesystem, Filesystem: &filesystemConfig}
+	default:
+		return fmt.Errorf("unsupported CLI provider %q", *provider)
 	}
 
-	config := sdk.SupabaseConfig{ProjectURL: projectURL, APIKey: apiKey}
-	if accessToken := os.Getenv("SUPABASE_ACCESS_TOKEN"); accessToken != "" {
-		config.TokenSource = func(context.Context) (string, error) { return accessToken, nil }
-	}
-	client, err := sdk.New(sdk.Config{Provider: sdk.ProviderSupabase, Supabase: &config})
+	client, err := sdk.New(config)
 	if err != nil {
 		return err
 	}

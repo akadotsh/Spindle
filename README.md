@@ -1,10 +1,11 @@
 # File Uploader SDK for Go
 
-A provider-neutral Go SDK for uploading files to cloud object storage.
+A provider-neutral Go SDK for uploading files to local or cloud storage.
 
 ## Layout
 
 - `packages/sdk`: typed upload request/result, provider adapter contract, and client.
+- `packages/adapters/filesystem`: local filesystem adapter.
 - `packages/adapters/gcs`: Google Cloud Storage adapter.
 - `packages/adapters/supabase`: Supabase Storage HTTP adapter.
 - `packages/adapters/s3`: reserved for a reusable S3-compatible adapter.
@@ -53,3 +54,11 @@ go run ./cmd/uploader --bucket assets --key test/logo.png --file ./logo.png
 ```
 
 Use a publishable key only when the bucket's Storage policies allow the upload. Keep a secret key private; it bypasses Row Level Security. Set `SUPABASE_ACCESS_TOKEN` to a signed-in user's JWT when uploading with that user's permissions.
+
+## Test a filesystem upload
+
+The filesystem adapter stores files under `<root-dir>/<bucket>/<key>`:
+
+```sh
+go run ./cmd/uploader --provider filesystem --root-dir ./uploads --bucket local --key test/logo.png --file ./logo.png
+```
