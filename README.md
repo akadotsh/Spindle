@@ -6,6 +6,7 @@ A provider-neutral Go SDK for uploading files to cloud object storage.
 
 - `packages/sdk`: typed upload request/result, provider adapter contract, and client.
 - `packages/adapters/gcs`: Google Cloud Storage adapter.
+- `packages/adapters/supabase`: Supabase Storage HTTP adapter.
 - `packages/adapters/s3`: reserved for a reusable S3-compatible adapter.
 - `packages/adapters/upstash`: Upstash Blob adapter using its S3-compatible API.
 - `packages/adapters/vercel`: Vercel Blob adapter using its HTTP API.
@@ -38,4 +39,5 @@ result, err := client.Upload(ctx, sdk.UploadRequest{
 2. Implement the Google Cloud Storage adapter. *(complete)*
 3. Implement Upstash Blob's S3-compatible upload adapter. *(complete)*
 4. Implement Vercel Blob's HTTP API adapter. *(complete)*
-5. Add integration examples and provider-backed tests.
+5. Implement Supabase Storage's HTTP API adapter. *(complete)*
+6. Add integration examples and provider-backed tests.
