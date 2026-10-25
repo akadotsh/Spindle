@@ -62,3 +62,13 @@ The filesystem adapter stores files under `<root-dir>/<bucket>/<key>`:
 ```sh
 go run ./cmd/uploader --provider filesystem --root-dir ./uploads --bucket local --key test/logo.png --file ./logo.png
 ```
+
+## Run the terminal app
+
+The Bubble Tea app currently supports filesystem and Supabase uploads:
+
+```sh
+go run ./cmd/tui
+```
+
+Supabase values can be entered in the app or prefilled with `SUPABASE_PROJECT_URL` and `SUPABASE_API_KEY`.
