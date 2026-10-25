@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/zalando/go-keyring"
 
 	"github.com/akashprasad/file-uploader/packages/sdk"
 )
@@ -18,7 +20,8 @@ type screen int
 
 const (
 	providerScreen screen = iota
-	formScreen
+	setupScreen
+	uploadFormScreen
 	uploadingScreen
 	resultScreen
 )
@@ -39,6 +42,7 @@ type model struct {
 	providers []sdk.Provider
 	selected  int
 	provider  sdk.Provider
+	profile   map[string]string
 	fields    []field
 	focused   int
 	spinner   spinner.Model
@@ -73,15 +77,17 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
-		if key.String() == "ctrl+c" || key.String() == "q" && m.screen != formScreen {
+		if key.String() == "ctrl+c" || key.String() == "q" && (m.screen == providerScreen || m.screen == resultScreen) {
 			return m, tea.Quit
 		}
 
 		switch m.screen {
 		case providerScreen:
 			return m.updateProvider(key)
-		case formScreen:
-			return m.updateForm(key)
+		case setupScreen:
+			return m.updateSetup(key)
+		case uploadFormScreen:
+			return m.updateUploadForm(key)
 		case resultScreen:
 			switch key.String() {
 			case "enter":
@@ -89,7 +95,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = nil
 				m.resultURL = ""
 			case "esc":
-				m.screen = formScreen
+				m.screen = uploadFormScreen
 			}
 			return m, nil
 		}
@@ -109,7 +115,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.screen == formScreen && len(m.fields) > 0 {
+	if (m.screen == setupScreen || m.screen == uploadFormScreen) && len(m.fields) > 0 {
 		var cmd tea.Cmd
 		m.fields[m.focused].input, cmd = m.fields[m.focused].input.Update(msg)
 		return m, cmd
@@ -129,15 +135,71 @@ func (m model) updateProvider(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		m.provider = m.providers[m.selected]
-		m.fields = fieldsFor(m.provider)
+		m.err = nil
+		if m.provider == sdk.ProviderFilesystem {
+			m.profile = map[string]string{"Root directory": "./uploads"}
+			return m.enterUploadForm()
+		}
+		profile, err := loadProfile(m.provider)
+		if err == nil {
+			m.profile = profile
+			return m.enterUploadForm()
+		}
+		if !errors.Is(err, keyring.ErrNotFound) {
+			m.screen = providerScreen
+			m.err = err
+			return m, nil
+		}
+		m.profile = nil
+		m.fields = setupFieldsFor(m.provider, nil)
 		m.focused = 0
-		m.screen = formScreen
+		m.screen = setupScreen
 		return m, m.fields[0].input.Focus()
 	}
 	return m, nil
 }
 
-func (m model) updateForm(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m model) updateSetup(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "esc":
+		m.screen = providerScreen
+		return m, nil
+	case "tab", "down":
+		return m.moveFocus(1)
+	case "shift+tab", "up":
+		return m.moveFocus(-1)
+	case "enter":
+		if m.focused < len(m.fields)-1 {
+			return m.moveFocus(1)
+		}
+		values, err := m.values()
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		if m.provider != sdk.ProviderFilesystem {
+			if err := saveProfile(m.provider, values); err != nil {
+				m.err = fmt.Errorf("save credentials to system keychain: %w", err)
+				return m, nil
+			}
+		}
+		m.profile = values
+		m.err = nil
+		return m.enterUploadForm()
+	}
+
+	var cmd tea.Cmd
+	m.fields[m.focused].input, cmd = m.fields[m.focused].input.Update(key)
+	return m, cmd
+}
+
+func (m model) updateUploadForm(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if key.String() == "ctrl+e" && m.provider != sdk.ProviderFilesystem {
+		m.fields = setupFieldsFor(m.provider, m.profile)
+		m.focused = 0
+		m.screen = setupScreen
+		return m, m.fields[0].input.Focus()
+	}
 	switch key.String() {
 	case "esc":
 		m.screen = providerScreen
@@ -157,12 +219,18 @@ func (m model) updateForm(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.err = nil
 		m.screen = uploadingScreen
-		return m, tea.Batch(m.spinner.Tick, upload(m.provider, values))
+		return m, tea.Batch(m.spinner.Tick, upload(m.provider, m.profile, values))
 	}
-
 	var cmd tea.Cmd
 	m.fields[m.focused].input, cmd = m.fields[m.focused].input.Update(key)
 	return m, cmd
+}
+
+func (m model) enterUploadForm() (tea.Model, tea.Cmd) {
+	m.fields = uploadFieldsFor(m.provider)
+	m.focused = 0
+	m.screen = uploadFormScreen
+	return m, m.fields[0].input.Focus()
 }
 
 func (m model) moveFocus(change int) (tea.Model, tea.Cmd) {
@@ -183,49 +251,59 @@ func (m model) values() (map[string]string, error) {
 	return values, nil
 }
 
-func fieldsFor(provider sdk.Provider) []field {
-	source := newField("Source file", "./path/to/file", "", false, true)
-	bucket := newField("Bucket", "assets", "", false, true)
-	key := newField("Object key", "images/photo.png", "", false, true)
+func setupFieldsFor(provider sdk.Provider, values map[string]string) []field {
+	get := func(name string) string { return values[name] }
+	if provider == sdk.ProviderFilesystem {
+		return []field{newField("Root directory", "./uploads", get("Root directory"), false, true)}
+	}
 	switch provider {
-	case sdk.ProviderFilesystem:
-		return []field{
-			newField("Root directory", "./uploads", "./uploads", false, true),
-			source,
-			newField("Bucket", "local", "", false, true),
-			key,
-		}
 	case sdk.ProviderGCS:
 		return []field{
-			newField("OAuth access token", "Google Cloud OAuth token", "", true, true),
-			source, bucket, key,
+			newField("OAuth access token", "Google Cloud OAuth token", get("OAuth access token"), true, true),
 		}
 	case sdk.ProviderUpstash:
 		return []field{
-			newField("S3 endpoint", "https://...", "", false, true),
-			newField("Region", "Upstash region", "", false, true),
-			newField("Bucket", "Upstash bucket", "", false, true),
-			newField("S3 access key", "S3 access key", "", true, true),
-			newField("S3 secret key", "S3 secret key", "", true, true),
-			newField("S3 session token (optional)", "", "", true, false),
-			newField("Public base URL (optional)", "", "", false, false),
-			source, key,
+			newField("S3 endpoint", "https://...", get("S3 endpoint"), false, true),
+			newField("Region", "Upstash region", get("Region"), false, true),
+			newField("Bucket", "Upstash bucket", get("Bucket"), false, true),
+			newField("S3 access key", "S3 access key", get("S3 access key"), true, true),
+			newField("S3 secret key", "S3 secret key", get("S3 secret key"), true, true),
+			newField("S3 session token (optional)", "", get("S3 session token (optional)"), true, false),
+			newField("Public base URL (optional)", "", get("Public base URL (optional)"), false, false),
 		}
 	case sdk.ProviderVercel:
 		return []field{
-			newField("Blob token", "Vercel Blob token", "", true, true),
-			newField("Store ID", "Vercel Blob store ID", "", false, true),
-			newField("Access (public/private)", "public", "public", false, true),
-			source, key,
+			newField("Blob token", "Vercel Blob token", get("Blob token"), true, true),
+			newField("Store ID", "Vercel Blob store ID", get("Store ID"), false, true),
+			newField("Access (public/private)", "public", defaultValue(get("Access (public/private)"), "public"), false, true),
 		}
 	default:
 		return []field{
-			newField("Project URL", "https://project.supabase.co", os.Getenv("SUPABASE_PROJECT_URL"), false, true),
-			newField("API key", "Supabase API key", os.Getenv("SUPABASE_API_KEY"), true, true),
-			newField("Access token (optional)", "User JWT", "", true, false),
-			source, bucket, key,
+			newField("Project URL", "https://project.supabase.co", defaultValue(get("Project URL"), os.Getenv("SUPABASE_PROJECT_URL")), false, true),
+			newField("API key", "Supabase API key", defaultValue(get("API key"), os.Getenv("SUPABASE_API_KEY")), true, true),
+			newField("Access token (optional)", "User JWT", get("Access token (optional)"), true, false),
 		}
 	}
+}
+
+func uploadFieldsFor(provider sdk.Provider) []field {
+	source := newField("Source file", "./path/to/file", "", false, true)
+	key := newField("Object key", "images/photo.png", "", false, true)
+	if provider == sdk.ProviderUpstash || provider == sdk.ProviderVercel {
+		return []field{source, key}
+	}
+	bucketDefault := "assets"
+	if provider == sdk.ProviderFilesystem {
+		bucketDefault = "local"
+	}
+	return []field{source, newField("Bucket", bucketDefault, "", false, true), key}
+}
+
+func defaultValue(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func newField(name, placeholder, value string, secret, required bool) field {
@@ -240,7 +318,7 @@ func newField(name, placeholder, value string, secret, required bool) field {
 	return field{name: name, input: input, required: required}
 }
 
-func upload(provider sdk.Provider, values map[string]string) tea.Cmd {
+func upload(provider sdk.Provider, profile, values map[string]string) tea.Cmd {
 	return func() tea.Msg {
 		file, err := os.Open(values["Source file"])
 		if err != nil {
@@ -251,30 +329,30 @@ func upload(provider sdk.Provider, values map[string]string) tea.Cmd {
 		var config sdk.Config
 		switch provider {
 		case sdk.ProviderFilesystem:
-			filesystemConfig := sdk.FilesystemConfig{RootDir: values["Root directory"]}
+			filesystemConfig := sdk.FilesystemConfig{RootDir: profile["Root directory"]}
 			config = sdk.Config{Provider: provider, Filesystem: &filesystemConfig}
 		case sdk.ProviderGCS:
-			token := values["OAuth access token"]
+			token := profile["OAuth access token"]
 			gcsConfig := sdk.GCSConfig{TokenSource: func(context.Context) (string, error) { return token, nil }}
 			config = sdk.Config{Provider: provider, GCS: &gcsConfig}
 		case sdk.ProviderSupabase:
-			supabaseConfig := sdk.SupabaseConfig{ProjectURL: values["Project URL"], APIKey: values["API key"]}
-			if token := values["Access token (optional)"]; token != "" {
+			supabaseConfig := sdk.SupabaseConfig{ProjectURL: profile["Project URL"], APIKey: profile["API key"]}
+			if token := profile["Access token (optional)"]; token != "" {
 				supabaseConfig.TokenSource = func(context.Context) (string, error) { return token, nil }
 			}
 			config = sdk.Config{Provider: provider, Supabase: &supabaseConfig}
 		case sdk.ProviderUpstash:
 			credentials := sdk.UpstashCredentials{
-				AccessKey: values["S3 access key"], SecretKey: values["S3 secret key"], SessionToken: values["S3 session token (optional)"],
+				AccessKey: profile["S3 access key"], SecretKey: profile["S3 secret key"], SessionToken: profile["S3 session token (optional)"],
 			}
 			upstashConfig := sdk.UpstashConfig{
-				Endpoint: values["S3 endpoint"], Region: values["Region"], Bucket: values["Bucket"],
-				PublicBaseURL:     values["Public base URL (optional)"],
+				Endpoint: profile["S3 endpoint"], Region: profile["Region"], Bucket: profile["Bucket"],
+				PublicBaseURL:     profile["Public base URL (optional)"],
 				CredentialsSource: func(context.Context) (sdk.UpstashCredentials, error) { return credentials, nil },
 			}
 			config = sdk.Config{Provider: provider, Upstash: &upstashConfig}
 		case sdk.ProviderVercel:
-			vercelConfig := sdk.VercelConfig{Token: values["Blob token"], StoreID: values["Store ID"], Access: values["Access (public/private)"]}
+			vercelConfig := sdk.VercelConfig{Token: profile["Blob token"], StoreID: profile["Store ID"], Access: profile["Access (public/private)"]}
 			config = sdk.Config{Provider: provider, Vercel: &vercelConfig}
 		default:
 			return uploadFinishedMsg{err: fmt.Errorf("unsupported TUI provider %q", provider)}
@@ -303,7 +381,7 @@ func (m model) View() tea.View {
 		content.WriteString("Choose a provider\n\n")
 		for index, provider := range m.providers {
 			prefix := "  "
-			name := string(provider)
+			name := providerName(provider)
 			if index == m.selected {
 				prefix = "› "
 				name = selectedStyle.Render(name)
@@ -311,9 +389,15 @@ func (m model) View() tea.View {
 			fmt.Fprintf(&content, "%s%s\n", prefix, name)
 		}
 		content.WriteString("\n")
+		if m.err != nil {
+			content.WriteString(errorStyle.Render(m.err.Error()))
+			content.WriteString("\n\n")
+		}
 		content.WriteString(mutedStyle.Render("↑/↓ select • enter continue • q quit"))
-	case formScreen:
-		fmt.Fprintf(&content, "Provider: %s\n\n", selectedStyle.Render(string(m.provider)))
+	case setupScreen:
+		fmt.Fprintf(&content, "Set up %s\n\n", selectedStyle.Render(providerName(m.provider)))
+		content.WriteString(mutedStyle.Render("Credentials are saved in your system keychain.\n"))
+		content.WriteString(mutedStyle.Render("\n"))
 		for index, field := range m.fields {
 			label := field.name
 			if index == m.focused {
@@ -325,7 +409,25 @@ func (m model) View() tea.View {
 			content.WriteString(errorStyle.Render(m.err.Error()))
 			content.WriteString("\n\n")
 		}
-		content.WriteString(mutedStyle.Render("tab next • shift+tab previous • enter upload • esc back"))
+		content.WriteString(mutedStyle.Render("tab next • shift+tab previous • enter save and continue • esc back"))
+	case uploadFormScreen:
+		fmt.Fprintf(&content, "Provider: %s\n\n", selectedStyle.Render(providerName(m.provider)))
+		for index, field := range m.fields {
+			label := field.name
+			if index == m.focused {
+				label = selectedStyle.Render(label)
+			}
+			fmt.Fprintf(&content, "%s\n%s\n\n", label, field.input.View())
+		}
+		if m.err != nil {
+			content.WriteString(errorStyle.Render(m.err.Error()))
+			content.WriteString("\n\n")
+		}
+		if m.provider == sdk.ProviderFilesystem {
+			content.WriteString(mutedStyle.Render("tab next • shift+tab previous • enter upload • esc providers"))
+		} else {
+			content.WriteString(mutedStyle.Render("tab next • shift+tab previous • enter upload • ctrl+e credentials • esc providers"))
+		}
 	case uploadingScreen:
 		fmt.Fprintf(&content, "%s Uploading to %s…\n", m.spinner.View(), m.provider)
 	case resultScreen:
@@ -348,6 +450,23 @@ func (m model) View() tea.View {
 	view.AltScreen = true
 	view.WindowTitle = "File Uploader"
 	return view
+}
+
+func providerName(provider sdk.Provider) string {
+	switch provider {
+	case sdk.ProviderFilesystem:
+		return "Local filesystem"
+	case sdk.ProviderGCS:
+		return "Google Cloud Storage"
+	case sdk.ProviderSupabase:
+		return "Supabase Storage"
+	case sdk.ProviderUpstash:
+		return "Upstash Blob"
+	case sdk.ProviderVercel:
+		return "Vercel Blob"
+	default:
+		return string(provider)
+	}
 }
 
 func main() {
