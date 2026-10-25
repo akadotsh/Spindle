@@ -32,6 +32,7 @@ type GCSConfig = gcs.Config
 type FilesystemConfig = filesystem.Config
 type SupabaseConfig = supabase.Config
 type UpstashConfig = upstash.Config
+type UpstashCredentials = upstash.Credentials
 type VercelConfig = vercel.Config
 
 // Config selects a provider and its credentials.

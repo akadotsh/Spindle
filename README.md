@@ -65,7 +65,9 @@ go run ./cmd/uploader --provider filesystem --root-dir ./uploads --bucket local 
 
 ## Run the terminal app
 
-The Bubble Tea app currently supports filesystem and Supabase uploads:
+The Bubble Tea app supports filesystem, Google Cloud Storage, Supabase, Upstash Blob, and Vercel Blob uploads. Provider credentials are entered on the provider form; secret fields are masked while typing.
+
+Google Cloud Storage requires an OAuth access token. Upstash requires S3-compatible credentials for the selected bucket; its bucket token must first be exchanged for those credentials.
 
 ```sh
 go run ./cmd/tui

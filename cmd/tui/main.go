@@ -24,8 +24,9 @@ const (
 )
 
 type field struct {
-	name  string
-	input textinput.Model
+	name     string
+	input    textinput.Model
+	required bool
 }
 
 type uploadFinishedMsg struct {
@@ -55,8 +56,14 @@ var (
 
 func initialModel() model {
 	return model{
-		providers: []sdk.Provider{sdk.ProviderFilesystem, sdk.ProviderSupabase},
-		spinner:   spinner.New(spinner.WithSpinner(spinner.Dot)),
+		providers: []sdk.Provider{
+			sdk.ProviderFilesystem,
+			sdk.ProviderGCS,
+			sdk.ProviderSupabase,
+			sdk.ProviderUpstash,
+			sdk.ProviderVercel,
+		},
+		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
 	}
 }
 
@@ -168,7 +175,7 @@ func (m model) values() (map[string]string, error) {
 	values := make(map[string]string, len(m.fields))
 	for _, field := range m.fields {
 		value := strings.TrimSpace(field.input.Value())
-		if value == "" {
+		if field.required && value == "" {
 			return nil, fmt.Errorf("%s is required", field.name)
 		}
 		values[field.name] = value
@@ -177,24 +184,51 @@ func (m model) values() (map[string]string, error) {
 }
 
 func fieldsFor(provider sdk.Provider) []field {
-	if provider == sdk.ProviderFilesystem {
+	source := newField("Source file", "./path/to/file", "", false, true)
+	bucket := newField("Bucket", "assets", "", false, true)
+	key := newField("Object key", "images/photo.png", "", false, true)
+	switch provider {
+	case sdk.ProviderFilesystem:
 		return []field{
-			newField("Root directory", "./uploads", "./uploads", false),
-			newField("Source file", "./path/to/file", "", false),
-			newField("Bucket", "local", "", false),
-			newField("Object key", "images/photo.png", "", false),
+			newField("Root directory", "./uploads", "./uploads", false, true),
+			source,
+			newField("Bucket", "local", "", false, true),
+			key,
 		}
-	}
-	return []field{
-		newField("Project URL", "https://project.supabase.co", os.Getenv("SUPABASE_PROJECT_URL"), false),
-		newField("API key", "Supabase API key", os.Getenv("SUPABASE_API_KEY"), true),
-		newField("Source file", "./path/to/file", "", false),
-		newField("Bucket", "assets", "", false),
-		newField("Object key", "images/photo.png", "", false),
+	case sdk.ProviderGCS:
+		return []field{
+			newField("OAuth access token", "Google Cloud OAuth token", "", true, true),
+			source, bucket, key,
+		}
+	case sdk.ProviderUpstash:
+		return []field{
+			newField("S3 endpoint", "https://...", "", false, true),
+			newField("Region", "Upstash region", "", false, true),
+			newField("Bucket", "Upstash bucket", "", false, true),
+			newField("S3 access key", "S3 access key", "", true, true),
+			newField("S3 secret key", "S3 secret key", "", true, true),
+			newField("S3 session token (optional)", "", "", true, false),
+			newField("Public base URL (optional)", "", "", false, false),
+			source, key,
+		}
+	case sdk.ProviderVercel:
+		return []field{
+			newField("Blob token", "Vercel Blob token", "", true, true),
+			newField("Store ID", "Vercel Blob store ID", "", false, true),
+			newField("Access (public/private)", "public", "public", false, true),
+			source, key,
+		}
+	default:
+		return []field{
+			newField("Project URL", "https://project.supabase.co", os.Getenv("SUPABASE_PROJECT_URL"), false, true),
+			newField("API key", "Supabase API key", os.Getenv("SUPABASE_API_KEY"), true, true),
+			newField("Access token (optional)", "User JWT", "", true, false),
+			source, bucket, key,
+		}
 	}
 }
 
-func newField(name, placeholder, value string, secret bool) field {
+func newField(name, placeholder, value string, secret, required bool) field {
 	input := textinput.New()
 	input.Prompt = ""
 	input.Placeholder = placeholder
@@ -203,7 +237,7 @@ func newField(name, placeholder, value string, secret bool) field {
 	if secret {
 		input.EchoMode = textinput.EchoPassword
 	}
-	return field{name: name, input: input}
+	return field{name: name, input: input, required: required}
 }
 
 func upload(provider sdk.Provider, values map[string]string) tea.Cmd {
@@ -219,9 +253,29 @@ func upload(provider sdk.Provider, values map[string]string) tea.Cmd {
 		case sdk.ProviderFilesystem:
 			filesystemConfig := sdk.FilesystemConfig{RootDir: values["Root directory"]}
 			config = sdk.Config{Provider: provider, Filesystem: &filesystemConfig}
+		case sdk.ProviderGCS:
+			token := values["OAuth access token"]
+			gcsConfig := sdk.GCSConfig{TokenSource: func(context.Context) (string, error) { return token, nil }}
+			config = sdk.Config{Provider: provider, GCS: &gcsConfig}
 		case sdk.ProviderSupabase:
 			supabaseConfig := sdk.SupabaseConfig{ProjectURL: values["Project URL"], APIKey: values["API key"]}
+			if token := values["Access token (optional)"]; token != "" {
+				supabaseConfig.TokenSource = func(context.Context) (string, error) { return token, nil }
+			}
 			config = sdk.Config{Provider: provider, Supabase: &supabaseConfig}
+		case sdk.ProviderUpstash:
+			credentials := sdk.UpstashCredentials{
+				AccessKey: values["S3 access key"], SecretKey: values["S3 secret key"], SessionToken: values["S3 session token (optional)"],
+			}
+			upstashConfig := sdk.UpstashConfig{
+				Endpoint: values["S3 endpoint"], Region: values["Region"], Bucket: values["Bucket"],
+				PublicBaseURL:     values["Public base URL (optional)"],
+				CredentialsSource: func(context.Context) (sdk.UpstashCredentials, error) { return credentials, nil },
+			}
+			config = sdk.Config{Provider: provider, Upstash: &upstashConfig}
+		case sdk.ProviderVercel:
+			vercelConfig := sdk.VercelConfig{Token: values["Blob token"], StoreID: values["Store ID"], Access: values["Access (public/private)"]}
+			config = sdk.Config{Provider: provider, Vercel: &vercelConfig}
 		default:
 			return uploadFinishedMsg{err: fmt.Errorf("unsupported TUI provider %q", provider)}
 		}
