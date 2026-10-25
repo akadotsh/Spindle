@@ -41,3 +41,15 @@ result, err := client.Upload(ctx, sdk.UploadRequest{
 4. Implement Vercel Blob's HTTP API adapter. *(complete)*
 5. Implement Supabase Storage's HTTP API adapter. *(complete)*
 6. Add integration examples and provider-backed tests.
+
+## Test a Supabase upload
+
+Create a bucket in Supabase first, then set the project URL and API key in your shell:
+
+```sh
+export SUPABASE_PROJECT_URL="https://your-project-ref.supabase.co"
+export SUPABASE_API_KEY="sb_secret_..."
+go run ./cmd/uploader --bucket assets --key test/logo.png --file ./logo.png
+```
+
+Use a publishable key only when the bucket's Storage policies allow the upload. Keep a secret key private; it bypasses Row Level Security. Set `SUPABASE_ACCESS_TOKEN` to a signed-in user's JWT when uploading with that user's permissions.
