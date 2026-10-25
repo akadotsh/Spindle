@@ -3,11 +3,14 @@ package gcs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/akashprasad/file-uploader/packages/sdk/core"
 )
@@ -88,3 +91,95 @@ func (a *Adapter) Upload(ctx context.Context, request core.UploadRequest) (core.
 }
 
 var _ core.Adapter = (*Adapter)(nil)
+
+func (a *Adapter) objectRequest(ctx context.Context, method, endpoint string) (*http.Response, error) {
+	token, err := a.tokenSource(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get Google Cloud Storage OAuth token: %w", err)
+	}
+	if strings.TrimSpace(token) == "" {
+		return nil, fmt.Errorf("Google Cloud Storage OAuth token is empty")
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	return a.httpClient.Do(req)
+}
+
+func (a *Adapter) Get(ctx context.Context, r core.GetRequest) (core.GetResult, error) {
+	u := "https://storage.googleapis.com/storage/v1/b/" + url.PathEscape(r.Bucket) + "/o/" + url.PathEscape(r.Key) + "?alt=media"
+	resp, err := a.objectRequest(ctx, http.MethodGet, u)
+	if err != nil {
+		return core.GetResult{}, err
+	}
+	if resp.StatusCode/100 != 2 {
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return core.GetResult{}, fmt.Errorf("Google Cloud Storage get failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return core.GetResult{Object: core.Object{Bucket: r.Bucket, Key: r.Key, URL: "https://storage.googleapis.com/" + r.Bucket + "/" + r.Key, ContentType: resp.Header.Get("Content-Type"), ETag: resp.Header.Get("ETag")}, Body: resp.Body}, nil
+}
+
+func (a *Adapter) List(ctx context.Context, r core.ListRequest) (core.ListResult, error) {
+	q := url.Values{"prefix": {r.Prefix}, "maxResults": {strconv.Itoa(pageLimit(r.Limit))}}
+	if r.Cursor != "" {
+		q.Set("pageToken", r.Cursor)
+	}
+	resp, err := a.objectRequest(ctx, http.MethodGet, "https://storage.googleapis.com/storage/v1/b/"+url.PathEscape(r.Bucket)+"/o?"+q.Encode())
+	if err != nil {
+		return core.ListResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return core.ListResult{}, fmt.Errorf("Google Cloud Storage list failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var data struct {
+		Next  string `json:"nextPageToken"`
+		Items []struct {
+			Name        string `json:"name"`
+			ContentType string `json:"contentType"`
+			Size        string `json:"size"`
+			ETag        string `json:"etag"`
+			Updated     string `json:"updated"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return core.ListResult{}, err
+	}
+	out := core.ListResult{NextCursor: data.Next}
+	for _, o := range data.Items {
+		size, _ := strconv.ParseInt(o.Size, 10, 64)
+		updated, _ := time.Parse(time.RFC3339, o.Updated)
+		out.Objects = append(out.Objects, core.Object{Bucket: r.Bucket, Key: o.Name, URL: "https://storage.googleapis.com/" + r.Bucket + "/" + o.Name, Size: size, ContentType: o.ContentType, ETag: o.ETag, UpdatedAt: updated})
+	}
+	return out, nil
+}
+
+func (a *Adapter) Delete(ctx context.Context, r core.DeleteRequest) error {
+	u := "https://storage.googleapis.com/storage/v1/b/" + url.PathEscape(r.Bucket) + "/o/" + url.PathEscape(r.Key)
+	resp, err := a.objectRequest(ctx, http.MethodDelete, u)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("Google Cloud Storage delete failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+func pageLimit(n int) int {
+	if n <= 0 {
+		return 100
+	}
+	if n > 1000 {
+		return 1000
+	}
+	return n
+}
+
+var _ core.ObjectAdapter = (*Adapter)(nil)

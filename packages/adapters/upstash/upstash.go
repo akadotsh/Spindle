@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -151,3 +152,117 @@ func sign(secret, date, region, stringToSign string) string {
 }
 
 var _ core.Adapter = (*Adapter)(nil)
+
+func (a *Adapter) signedRequest(ctx context.Context, method, key string, query url.Values) (*http.Response, error) {
+	credentials, err := a.credentials(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get Upstash S3 credentials: %w", err)
+	}
+	if credentials.AccessKey == "" || credentials.SecretKey == "" {
+		return nil, fmt.Errorf("Upstash S3 credentials are incomplete")
+	}
+	u := *a.endpoint
+	u.Path = strings.TrimRight(u.Path, "/") + "/" + a.bucket
+	if key != "" {
+		u.Path += "/" + key
+	}
+	u.RawQuery = query.Encode()
+	stamp := a.now().UTC()
+	date, amzDate := stamp.Format("20060102"), stamp.Format("20060102T150405Z")
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+	req.Header.Set("x-amz-date", amzDate)
+	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
+	canonicalHeaders := "host:" + u.Host + "\n" + "x-amz-content-sha256:UNSIGNED-PAYLOAD\n" + "x-amz-date:" + amzDate + "\n"
+	if credentials.SessionToken != "" {
+		req.Header.Set("x-amz-security-token", credentials.SessionToken)
+		signedHeaders += ";x-amz-security-token"
+		canonicalHeaders += "x-amz-security-token:" + credentials.SessionToken + "\n"
+	}
+	canonicalQuery := strings.ReplaceAll(u.Query().Encode(), "+", "%20")
+	canonicalRequest := strings.Join([]string{method, u.EscapedPath(), canonicalQuery, canonicalHeaders, signedHeaders, "UNSIGNED-PAYLOAD"}, "\n")
+	hash := sha256.Sum256([]byte(canonicalRequest))
+	scope := date + "/" + a.region + "/s3/aws4_request"
+	toSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + fmt.Sprintf("%x", hash)
+	signature := sign(credentials.SecretKey, date, a.region, toSign)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+credentials.AccessKey+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
+	return a.client.Do(req)
+}
+
+func (a *Adapter) Get(ctx context.Context, r core.GetRequest) (core.GetResult, error) {
+	resp, err := a.signedRequest(ctx, http.MethodGet, r.Key, nil)
+	if err != nil {
+		return core.GetResult{}, err
+	}
+	if resp.StatusCode/100 != 2 {
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return core.GetResult{}, fmt.Errorf("Upstash S3 get failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return core.GetResult{Object: core.Object{Bucket: a.bucket, Key: r.Key, ContentType: resp.Header.Get("Content-Type"), ETag: resp.Header.Get("ETag")}, Body: resp.Body}, nil
+}
+
+func (a *Adapter) List(ctx context.Context, r core.ListRequest) (core.ListResult, error) {
+	q := url.Values{"list-type": {"2"}, "prefix": {r.Prefix}, "max-keys": {fmt.Sprint(upstashPageLimit(r.Limit))}}
+	if r.Cursor != "" {
+		q.Set("continuation-token", r.Cursor)
+	}
+	resp, err := a.signedRequest(ctx, http.MethodGet, "", q)
+	if err != nil {
+		return core.ListResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return core.ListResult{}, fmt.Errorf("Upstash S3 list failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var page struct {
+		Truncated bool   `xml:"IsTruncated"`
+		Next      string `xml:"NextContinuationToken"`
+		Contents  []struct {
+			Key          string    `xml:"Key"`
+			Size         int64     `xml:"Size"`
+			ETag         string    `xml:"ETag"`
+			LastModified time.Time `xml:"LastModified"`
+		} `xml:"Contents"`
+	}
+	if err := xml.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return core.ListResult{}, err
+	}
+	out := core.ListResult{}
+	for _, obj := range page.Contents {
+		out.Objects = append(out.Objects, core.Object{Bucket: a.bucket, Key: obj.Key, Size: obj.Size, ETag: strings.Trim(obj.ETag, "\""), UpdatedAt: obj.LastModified})
+	}
+	if page.Truncated {
+		out.NextCursor = page.Next
+	}
+	return out, nil
+}
+
+func (a *Adapter) Delete(ctx context.Context, r core.DeleteRequest) error {
+	resp, err := a.signedRequest(ctx, http.MethodDelete, r.Key, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("Upstash S3 delete failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+func upstashPageLimit(n int) int {
+	if n <= 0 {
+		return 100
+	}
+	if n > 1000 {
+		return 1000
+	}
+	return n
+}
+
+var _ core.ObjectAdapter = (*Adapter)(nil)

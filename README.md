@@ -14,7 +14,7 @@ A provider-neutral Go SDK for uploading files to local or cloud storage.
 
 ## Current API
 
-Create a `sdk.Client` with `sdk.New(sdk.Config{Provider: ..., ...})`, then call `Upload` with a reader and object destination. Provider-specific configuration is typed and selected in the same config. The GCS adapter calls Google's JSON API through standard HTTP, with an injectable OAuth access token source. A standard API key alone does not authorize object writes; an object's URL also does not imply public access.
+Create a `sdk.Client` with `sdk.New(sdk.Config{Provider: ..., ...})`, then use `Upload`, `Get`, `List`, and `Delete`. Uploading an existing key replaces it where the provider permits it; Supabase replacement is controlled by its `Upsert` setting. `Get` returns a streaming body that the caller must close. `List` returns object metadata a page at a time, and does not download object contents. Provider-specific configuration is typed and selected in the same config. GCS calls Google's JSON API through standard HTTP, with an injectable OAuth access token source. A standard API key alone does not authorize object writes; an object's URL also does not imply public access.
 
 ```go
 client, err := sdk.New(sdk.Config{
@@ -32,6 +32,13 @@ result, err := client.Upload(ctx, sdk.UploadRequest{
 	Bucket: "my-bucket",
 	Key:    "uploads/logo.png",
 })
+page, err := client.List(ctx, sdk.ListRequest{Bucket: "my-bucket", Prefix: "uploads/", Limit: 100})
+for _, object := range page.Objects {
+	fmt.Println(object.Key, object.Size)
+}
+if page.NextCursor != "" {
+	page, err = client.List(ctx, sdk.ListRequest{Bucket: "my-bucket", Prefix: "uploads/", Limit: 100, Cursor: page.NextCursor})
+}
 ```
 
 ## Build in chunks
@@ -41,7 +48,8 @@ result, err := client.Upload(ctx, sdk.UploadRequest{
 3. Implement Upstash Blob's S3-compatible upload adapter. *(complete)*
 4. Implement Vercel Blob's HTTP API adapter. *(complete)*
 5. Implement Supabase Storage's HTTP API adapter. *(complete)*
-6. Add integration examples and provider-backed tests.
+6. Add object get, list, and delete operations across the adapters. *(complete)*
+7. Add integration examples and provider-backed tests.
 
 ## Test a Supabase upload
 

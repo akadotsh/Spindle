@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path"
@@ -72,6 +73,124 @@ func (a *Adapter) Upload(ctx context.Context, request core.UploadRequest) (core.
 
 	absoluteDestination := filepath.Join(a.rootDir, filepath.FromSlash(destination))
 	return core.UploadResult{URL: (&url.URL{Scheme: "file", Path: absoluteDestination}).String()}, nil
+}
+
+func (a *Adapter) Get(ctx context.Context, request core.GetRequest) (core.GetResult, error) {
+	name, err := a.objectPath(request.Bucket, request.Key)
+	if err != nil {
+		return core.GetResult{}, err
+	}
+	root, err := os.OpenRoot(a.rootDir)
+	if err != nil {
+		return core.GetResult{}, err
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		root.Close()
+		return core.GetResult{}, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		root.Close()
+		return core.GetResult{}, err
+	}
+	return core.GetResult{Object: core.Object{Bucket: request.Bucket, Key: request.Key, Size: info.Size(), UpdatedAt: info.ModTime()}, Body: &rootFile{File: file, root: root}}, nil
+}
+
+type rootFile struct {
+	*os.File
+	root *os.Root
+}
+
+func (f *rootFile) Close() error {
+	err := f.File.Close()
+	if e := f.root.Close(); err == nil {
+		err = e
+	}
+	return err
+}
+
+func (a *Adapter) List(ctx context.Context, request core.ListRequest) (core.ListResult, error) {
+	if request.Bucket == "" || !filepath.IsLocal(filepath.FromSlash(request.Bucket)) {
+		return core.ListResult{}, fmt.Errorf("bucket must be a relative path")
+	}
+	base, err := a.objectPath(request.Bucket, "_")
+	if err != nil {
+		return core.ListResult{}, err
+	}
+	base = strings.TrimSuffix(base, "_")
+	limit := request.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	var all []core.Object
+	err = filepath.WalkDir(filepath.Join(a.rootDir, base), func(file string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		rel, err := filepath.Rel(filepath.Join(a.rootDir, request.Bucket), file)
+		if err != nil {
+			return err
+		}
+		key := filepath.ToSlash(rel)
+		if strings.HasPrefix(key, request.Prefix) && key > request.Cursor {
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			all = append(all, core.Object{Bucket: request.Bucket, Key: key, Size: info.Size(), UpdatedAt: info.ModTime()})
+		}
+		return nil
+	})
+	if err != nil {
+		return core.ListResult{}, err
+	}
+	// WalkDir is lexical, so the cursor can be applied before returning the page.
+	result := core.ListResult{}
+	for i, object := range all {
+		if i == limit {
+			result.NextCursor = all[i-1].Key
+			break
+		}
+		result.Objects = append(result.Objects, object)
+	}
+	return result, nil
+}
+
+func (a *Adapter) Delete(ctx context.Context, request core.DeleteRequest) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	name, err := a.objectPath(request.Bucket, request.Key)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(a.rootDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.Remove(name)
+}
+
+func (a *Adapter) objectPath(bucket, key string) (string, error) {
+	if bucket == "" || key == "" || !filepath.IsLocal(filepath.FromSlash(bucket)) || !filepath.IsLocal(filepath.FromSlash(key)) || bucket == "." || key == "." {
+		return "", fmt.Errorf("bucket and key must be relative paths")
+	}
+	return path.Join(bucket, key), nil
 }
 
 func mkdirAll(root *os.Root, directory string) error {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/akashprasad/file-uploader/packages/sdk/core"
 )
@@ -110,3 +111,111 @@ func (a *Adapter) Upload(ctx context.Context, request core.UploadRequest) (core.
 }
 
 var _ core.Adapter = (*Adapter)(nil)
+
+func (a *Adapter) apiRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, a.endpoint+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.token)
+	req.Header.Set("x-vercel-blob-store-id", a.storeID)
+	req.Header.Set("x-api-version", a.apiVersion)
+	return a.client.Do(req)
+}
+
+func (a *Adapter) Get(ctx context.Context, r core.GetRequest) (core.GetResult, error) {
+	host := a.storeID + "." + a.access + ".blob.vercel-storage.com"
+	u := url.URL{Scheme: "https", Host: host, Path: "/" + r.Key}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return core.GetResult{}, err
+	}
+	if a.access == "private" {
+		req.Header.Set("Authorization", "Bearer "+a.token)
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return core.GetResult{}, err
+	}
+	if resp.StatusCode/100 != 2 {
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return core.GetResult{}, fmt.Errorf("Vercel Blob get failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return core.GetResult{Object: core.Object{Bucket: r.Bucket, Key: r.Key, URL: u.String(), ContentType: resp.Header.Get("Content-Type"), ETag: resp.Header.Get("ETag")}, Body: resp.Body}, nil
+}
+
+func (a *Adapter) List(ctx context.Context, r core.ListRequest) (core.ListResult, error) {
+	q := url.Values{}
+	q.Set("limit", fmt.Sprint(vercelPageLimit(r.Limit)))
+	if r.Prefix != "" {
+		q.Set("prefix", r.Prefix)
+	}
+	if r.Cursor != "" {
+		q.Set("cursor", r.Cursor)
+	}
+	resp, err := a.apiRequest(ctx, http.MethodGet, "/?"+q.Encode(), nil)
+	if err != nil {
+		return core.ListResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return core.ListResult{}, fmt.Errorf("Vercel Blob list failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var data struct {
+		Blobs []struct {
+			URL, Pathname string
+			Size          int64
+			UploadedAt    time.Time
+			ETag          string
+		} `json:"blobs"`
+		Cursor  string `json:"cursor"`
+		HasMore bool   `json:"hasMore"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return core.ListResult{}, err
+	}
+	out := core.ListResult{}
+	for _, b := range data.Blobs {
+		out.Objects = append(out.Objects, core.Object{Bucket: r.Bucket, Key: b.Pathname, URL: b.URL, Size: b.Size, ETag: b.ETag, UpdatedAt: b.UploadedAt})
+	}
+	if data.HasMore {
+		out.NextCursor = data.Cursor
+	}
+	return out, nil
+}
+
+func (a *Adapter) Delete(ctx context.Context, r core.DeleteRequest) error {
+	body, _ := json.Marshal(map[string][]string{"urls": {r.Key}})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint+"/delete", strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.token)
+	req.Header.Set("x-vercel-blob-store-id", a.storeID)
+	req.Header.Set("x-api-version", a.apiVersion)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("Vercel Blob delete failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+var _ core.ObjectAdapter = (*Adapter)(nil)
+
+func vercelPageLimit(n int) int {
+	if n <= 0 {
+		return 100
+	}
+	if n > 1000 {
+		return 1000
+	}
+	return n
+}

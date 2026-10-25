@@ -3,10 +3,12 @@ package supabase
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/akashprasad/file-uploader/packages/sdk/core"
@@ -100,3 +102,131 @@ func (a *Adapter) Upload(ctx context.Context, request core.UploadRequest) (core.
 }
 
 var _ core.Adapter = (*Adapter)(nil)
+
+func (a *Adapter) authorized(ctx context.Context, method, endpoint string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("apikey", a.apiKey)
+	if a.token != nil {
+		token, e := a.token(ctx)
+		if e != nil {
+			return nil, e
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	}
+	return a.client.Do(req)
+}
+
+func (a *Adapter) Get(ctx context.Context, r core.GetRequest) (core.GetResult, error) {
+	endpoint := *a.projectURL
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/storage/v1/object/" + url.PathEscape(r.Bucket) + "/" + escapeKey(r.Key)
+	resp, err := a.authorized(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return core.GetResult{}, err
+	}
+	if resp.StatusCode/100 != 2 {
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return core.GetResult{}, fmt.Errorf("Supabase Storage get failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return core.GetResult{Object: core.Object{Bucket: r.Bucket, Key: r.Key, ContentType: resp.Header.Get("Content-Type"), ETag: resp.Header.Get("ETag")}, Body: resp.Body}, nil
+}
+
+func (a *Adapter) List(ctx context.Context, r core.ListRequest) (core.ListResult, error) {
+	limit := r.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	offset := 0
+	if r.Cursor != "" {
+		var err error
+		offset, err = strconv.Atoi(r.Cursor)
+		if err != nil || offset < 0 {
+			return core.ListResult{}, fmt.Errorf("invalid Supabase list cursor")
+		}
+	}
+	body, _ := json.Marshal(map[string]any{"prefix": r.Prefix, "limit": limit, "offset": offset, "sortBy": map[string]string{"column": "name", "order": "asc"}})
+	endpoint := *a.projectURL
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/storage/v1/object/list/" + url.PathEscape(r.Bucket)
+	resp, err := a.authorized(ctx, http.MethodPost, endpoint.String(), strings.NewReader(string(body)))
+	if err != nil {
+		return core.ListResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return core.ListResult{}, fmt.Errorf("Supabase Storage list failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var rows []struct {
+		Name     string `json:"name"`
+		Metadata struct {
+			Size     any    `json:"size"`
+			Mimetype string `json:"mimetype"`
+		} `json:"metadata"`
+		Updated string `json:"updated_at"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		return core.ListResult{}, err
+	}
+	out := core.ListResult{}
+	for _, row := range rows {
+		size := int64(0)
+		switch v := row.Metadata.Size.(type) {
+		case float64:
+			size = int64(v)
+		case string:
+			size, _ = strconv.ParseInt(v, 10, 64)
+		}
+		out.Objects = append(out.Objects, core.Object{Bucket: r.Bucket, Key: strings.TrimSuffix(r.Prefix, "/") + separator(r.Prefix) + row.Name, Size: size, ContentType: row.Metadata.Mimetype})
+	}
+	if len(rows) == limit {
+		out.NextCursor = strconv.Itoa(offset + len(rows))
+	}
+	return out, nil
+}
+
+func (a *Adapter) Delete(ctx context.Context, r core.DeleteRequest) error {
+	body, _ := json.Marshal(map[string][]string{"prefixes": {r.Key}})
+	endpoint := *a.projectURL
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/storage/v1/object/" + url.PathEscape(r.Bucket)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", a.apiKey)
+	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("Supabase Storage delete failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+func escapeKey(key string) string {
+	parts := strings.Split(key, "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	return strings.Join(parts, "/")
+}
+func separator(prefix string) string {
+	if prefix == "" || strings.HasSuffix(prefix, "/") {
+		return ""
+	}
+	return "/"
+}
+
+var _ core.ObjectAdapter = (*Adapter)(nil)

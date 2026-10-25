@@ -16,6 +16,13 @@ import (
 type UploadRequest = core.UploadRequest
 type UploadResult = core.UploadResult
 type Adapter = core.Adapter
+type Object = core.Object
+type GetRequest = core.GetRequest
+type GetResult = core.GetResult
+type ListRequest = core.ListRequest
+type ListResult = core.ListResult
+type DeleteRequest = core.DeleteRequest
+type ObjectAdapter = core.ObjectAdapter
 
 // Provider selects the storage provider.
 type Provider string
@@ -114,4 +121,42 @@ func (c *Client) Upload(ctx context.Context, request UploadRequest) (UploadResul
 		return UploadResult{}, fmt.Errorf("upload client has no adapter")
 	}
 	return c.adapter.Upload(ctx, request)
+}
+
+func (c *Client) objectAdapter() (ObjectAdapter, error) {
+	if c == nil || c.adapter == nil {
+		return nil, fmt.Errorf("storage client has no adapter")
+	}
+	a, ok := c.adapter.(ObjectAdapter)
+	if !ok {
+		return nil, fmt.Errorf("configured adapter does not support object operations")
+	}
+	return a, nil
+}
+
+// Get retrieves an object. The caller must close the returned body.
+func (c *Client) Get(ctx context.Context, request GetRequest) (GetResult, error) {
+	a, err := c.objectAdapter()
+	if err != nil {
+		return GetResult{}, err
+	}
+	return a.Get(ctx, request)
+}
+
+// List returns one page of object metadata. Use NextCursor to fetch more.
+func (c *Client) List(ctx context.Context, request ListRequest) (ListResult, error) {
+	a, err := c.objectAdapter()
+	if err != nil {
+		return ListResult{}, err
+	}
+	return a.List(ctx, request)
+}
+
+// Delete removes an object.
+func (c *Client) Delete(ctx context.Context, request DeleteRequest) error {
+	a, err := c.objectAdapter()
+	if err != nil {
+		return err
+	}
+	return a.Delete(ctx, request)
 }
