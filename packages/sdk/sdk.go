@@ -62,7 +62,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderGCS:
-		if config.GCS == nil || config.Supabase != nil || config.Upstash != nil || config.Vercel != nil {
+		if config.GCS == nil || config.Filesystem != nil || config.Supabase != nil || config.Upstash != nil || config.Vercel != nil {
 			return nil, fmt.Errorf("provide only GCS configuration when provider is %q", config.Provider)
 		}
 		adapter, err := gcs.New(*config.GCS)
@@ -71,7 +71,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderUpstash:
-		if config.Upstash == nil || config.GCS != nil || config.Supabase != nil || config.Vercel != nil {
+		if config.Upstash == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Vercel != nil {
 			return nil, fmt.Errorf("provide only Upstash configuration when provider is %q", config.Provider)
 		}
 		adapter, err := upstash.New(*config.Upstash)
@@ -80,7 +80,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderVercel:
-		if config.Vercel == nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil {
+		if config.Vercel == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil {
 			return nil, fmt.Errorf("provide only Vercel configuration when provider is %q", config.Provider)
 		}
 		adapter, err := vercel.New(*config.Vercel)
@@ -89,7 +89,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderSupabase:
-		if config.Supabase == nil || config.GCS != nil || config.Upstash != nil || config.Vercel != nil {
+		if config.Supabase == nil || config.Filesystem != nil || config.GCS != nil || config.Upstash != nil || config.Vercel != nil {
 			return nil, fmt.Errorf("provide only Supabase configuration when provider is %q", config.Provider)
 		}
 		adapter, err := supabase.New(*config.Supabase)
