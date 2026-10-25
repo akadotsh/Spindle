@@ -44,15 +44,11 @@ func New(config Config) (*Adapter, error) {
 	if config.APIKey == "" {
 		return nil, fmt.Errorf("Supabase API key is required")
 	}
-	tokenSource := config.TokenSource
-	if tokenSource == nil {
-		tokenSource = func(context.Context) (string, error) { return config.APIKey, nil }
-	}
 	client := config.HTTPClient
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Adapter{projectURL, config.APIKey, tokenSource, config.Upsert, config.Public, client}, nil
+	return &Adapter{projectURL, config.APIKey, config.TokenSource, config.Upsert, config.Public, client}, nil
 }
 
 // Upload writes an object to the configured Supabase project.
@@ -60,14 +56,6 @@ func (a *Adapter) Upload(ctx context.Context, request core.UploadRequest) (core.
 	if request.Source == nil || request.Bucket == "" || request.Key == "" {
 		return core.UploadResult{}, fmt.Errorf("upload source, bucket, and key are required")
 	}
-	token, err := a.token(ctx)
-	if err != nil {
-		return core.UploadResult{}, fmt.Errorf("get Supabase access token: %w", err)
-	}
-	if strings.TrimSpace(token) == "" {
-		return core.UploadResult{}, fmt.Errorf("Supabase access token is empty")
-	}
-
 	endpoint := *a.projectURL
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/storage/v1/object/" + request.Bucket + "/" + request.Key
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), request.Source)
@@ -75,7 +63,16 @@ func (a *Adapter) Upload(ctx context.Context, request core.UploadRequest) (core.
 		return core.UploadResult{}, fmt.Errorf("create Supabase upload request: %w", err)
 	}
 	httpRequest.Header.Set("apikey", a.apiKey)
-	httpRequest.Header.Set("Authorization", "Bearer "+token)
+	if a.token != nil {
+		token, err := a.token(ctx)
+		if err != nil {
+			return core.UploadResult{}, fmt.Errorf("get Supabase access token: %w", err)
+		}
+		if strings.TrimSpace(token) == "" {
+			return core.UploadResult{}, fmt.Errorf("Supabase access token is empty")
+		}
+		httpRequest.Header.Set("Authorization", "Bearer "+token)
+	}
 	if request.ContentType != "" {
 		httpRequest.Header.Set("Content-Type", request.ContentType)
 	}
