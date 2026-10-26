@@ -56,14 +56,29 @@ func fitRGBA(src image.Image, maxWidth, maxHeight int) ([]byte, int, int) {
 	h := max(1, int(math.Round(float64(b.Dy())*scale)))
 	pixels := make([]byte, w*h*4)
 	for y := 0; y < h; y++ {
-		sy := b.Min.Y + y*b.Dy()/h
+		sy := float64(b.Min.Y) + (float64(y)+0.5)*float64(b.Dy())/float64(h) - 0.5
 		for x := 0; x < w; x++ {
-			c := color.NRGBAModel.Convert(src.At(b.Min.X+x*b.Dx()/w, sy)).(color.NRGBA)
+			sx := float64(b.Min.X) + (float64(x)+0.5)*float64(b.Dx())/float64(w) - 0.5
+			c := sampleBilinear(src, sx, sy)
 			i := (y*w + x) * 4
 			pixels[i], pixels[i+1], pixels[i+2], pixels[i+3] = c.R, c.G, c.B, c.A
 		}
 	}
 	return pixels, w, h
+}
+
+func sampleBilinear(src image.Image, x, y float64) color.NRGBA {
+	b := src.Bounds()
+	x0, y0 := int(math.Floor(x)), int(math.Floor(y))
+	dx, dy := x-float64(x0), y-float64(y0)
+	blend := func(a, b color.NRGBA, t float64) color.NRGBA {
+		mix := func(x, y uint8) uint8 { return uint8(math.Round(float64(x)*(1-t) + float64(y)*t)) }
+		return color.NRGBA{R: mix(a.R, b.R), G: mix(a.G, b.G), B: mix(a.B, b.B), A: mix(a.A, b.A)}
+	}
+	point := func(x, y int) color.NRGBA {
+		return color.NRGBAModel.Convert(src.At(max(b.Min.X, min(x, b.Max.X-1)), max(b.Min.Y, min(y, b.Max.Y-1)))).(color.NRGBA)
+	}
+	return blend(blend(point(x0, y0), point(x0+1, y0), dx), blend(point(x0, y0+1), point(x0+1, y0+1), dx), dy)
 }
 
 func kittyImage(pixels []byte, width, height, cols, rows int) (string, string, error) {
