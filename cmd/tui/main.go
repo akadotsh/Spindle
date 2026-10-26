@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"io"
+	"mime"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +34,8 @@ const (
 	bucketScreen
 	listingScreen
 	browserScreen
+	previewLoadingScreen
+	previewScreen
 	objectConfirmScreen
 	downloadingScreen
 	deletingScreen
@@ -59,29 +64,40 @@ type objectFinishedMsg struct {
 	message string
 	err     error
 }
+type previewFinishedMsg struct {
+	content, clear string
+	kitty          bool
+	err            error
+}
 
 type model struct {
-	screen     screen
-	providers  []sdk.Provider
-	selected   int
-	provider   sdk.Provider
-	profile    map[string]string
-	fields     []field
-	focused    int
-	spinner    spinner.Model
-	resultURL  string
-	err        error
-	action     int
-	objects    []sdk.Object
-	buckets    []string
-	bucketSel  int
-	objectSel  int
-	bucket     string
-	prefix     string
-	cursor     string
-	nextCursor string
-	status     string
-	deleteKey  string
+	screen        screen
+	providers     []sdk.Provider
+	selected      int
+	provider      sdk.Provider
+	profile       map[string]string
+	fields        []field
+	focused       int
+	spinner       spinner.Model
+	resultURL     string
+	err           error
+	action        int
+	objects       []sdk.Object
+	buckets       []string
+	bucketSel     int
+	objectSel     int
+	bucket        string
+	prefix        string
+	cursor        string
+	nextCursor    string
+	status        string
+	deleteKey     string
+	width         int
+	height        int
+	preview       string
+	previewClear  string
+	previewKitty  bool
+	clearGraphics string
 }
 
 var (
@@ -110,6 +126,11 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = size.Width
+		m.height = size.Height
+		return m, nil
+	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		if key.String() == "ctrl+c" || key.String() == "q" && (m.screen == providerScreen || m.screen == resultScreen) {
 			return m, tea.Quit
@@ -159,6 +180,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case browserScreen:
 			return m.updateBrowser(key)
+		case previewScreen:
+			if key.String() == "esc" {
+				m.screen = browserScreen
+				m.clearGraphics = m.previewClear
+				m.previewClear = ""
+				m.preview = ""
+				return m, nil
+			}
+			return m, nil
 		case objectConfirmScreen:
 			switch key.String() {
 			case "y":
@@ -202,6 +232,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.bucketSel = 0
 			m.err = msg.err
 			m.screen = bucketScreen
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+	}
+	if m.screen == previewLoadingScreen {
+		switch msg := msg.(type) {
+		case previewFinishedMsg:
+			m.screen = previewScreen
+			m.preview = msg.content
+			m.previewClear = msg.clear
+			m.previewKitty = msg.kitty
+			m.err = msg.err
 			return m, nil
 		default:
 			var cmd tea.Cmd
@@ -397,6 +442,25 @@ func (m model) updateBrowser(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if len(m.objects) > 0 {
 			m.deleteKey = m.objects[m.objectSel].Key
 			m.screen = objectConfirmScreen
+		}
+	case "p":
+		if len(m.objects) > 0 {
+			cols := m.width - 8
+			rows := m.height - 9
+			if cols > 80 {
+				cols = 80
+			}
+			if rows > 30 {
+				rows = 30
+			}
+			if cols < 10 {
+				cols = 10
+			}
+			if rows < 4 {
+				rows = 4
+			}
+			m.screen = previewLoadingScreen
+			return m, tea.Batch(m.spinner.Tick, previewObject(m.provider, m.profile, m.objects[m.objectSel], cols, rows))
 		}
 	}
 	return m, nil
@@ -595,6 +659,50 @@ func downloadObject(provider sdk.Provider, profile map[string]string, object sdk
 	}
 }
 
+func previewObject(provider sdk.Provider, profile map[string]string, object sdk.Object, cols, rows int) tea.Cmd {
+	return func() tea.Msg {
+		client, err := clientFor(provider, profile)
+		if err != nil {
+			return previewFinishedMsg{err: err}
+		}
+		result, err := client.Get(context.Background(), sdk.GetRequest{Bucket: object.Bucket, Key: object.Key})
+		if err != nil {
+			return previewFinishedMsg{err: err}
+		}
+		defer result.Body.Close()
+		contentType := result.Object.ContentType
+		if contentType == "" {
+			contentType = mime.TypeByExtension(filepath.Ext(object.Key))
+		}
+		if !strings.HasPrefix(contentType, "image/") {
+			return previewFinishedMsg{err: fmt.Errorf("%s is not an image", object.Key)}
+		}
+		data, err := io.ReadAll(io.LimitReader(result.Body, maxPreviewBytes+1))
+		if err != nil {
+			return previewFinishedMsg{err: err}
+		}
+		if len(data) > maxPreviewBytes {
+			return previewFinishedMsg{err: fmt.Errorf("image exceeds the %d MiB preview limit", maxPreviewBytes/(1024*1024))}
+		}
+		config, _, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil {
+			return previewFinishedMsg{err: fmt.Errorf("read image header: %w", err)}
+		}
+		if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 20_000_000 {
+			return previewFinishedMsg{err: fmt.Errorf("image dimensions exceed the preview limit")}
+		}
+		img, _, err := image.Decode(bytes.NewReader(data))
+		if err != nil {
+			return previewFinishedMsg{err: fmt.Errorf("decode image: %w", err)}
+		}
+		content, clear, kitty, err := renderImagePreview(img, cols, rows)
+		if err != nil {
+			return previewFinishedMsg{err: err}
+		}
+		return previewFinishedMsg{content: content, clear: clear, kitty: kitty}
+	}
+}
+
 func deleteObject(provider sdk.Provider, profile map[string]string, bucket, key string) tea.Cmd {
 	return func() tea.Msg {
 		client, err := clientFor(provider, profile)
@@ -612,6 +720,7 @@ func deleteObject(provider sdk.Provider, profile map[string]string, bucket, key 
 
 func (m model) View() tea.View {
 	var content strings.Builder
+	content.WriteString(m.clearGraphics)
 	content.WriteString(titleStyle.Render("File Uploader"))
 	content.WriteString("\n\n")
 
@@ -709,6 +818,26 @@ func (m model) View() tea.View {
 	case objectConfirmScreen:
 		fmt.Fprintf(&content, "Delete object?\n\n%s\n\n", m.deleteKey)
 		content.WriteString(mutedStyle.Render("y confirm • n/esc cancel"))
+	case previewLoadingScreen:
+		fmt.Fprintf(&content, "%s Loading image preview…\n", m.spinner.View())
+	case previewScreen:
+		key := ""
+		if len(m.objects) > m.objectSel {
+			key = m.objects[m.objectSel].Key
+		}
+		fmt.Fprintf(&content, "Image preview: %s\n\n", key)
+		if m.err != nil {
+			content.WriteString(errorStyle.Render(m.err.Error()))
+		} else {
+			content.WriteString(m.preview)
+			content.WriteString("\n\n")
+			mode := "text fallback"
+			if m.previewKitty {
+				mode = "Kitty graphics"
+			}
+			content.WriteString(mutedStyle.Render(mode))
+		}
+		content.WriteString(" • esc back")
 	case browserScreen:
 		fmt.Fprintf(&content, "Objects in %s", m.bucket)
 		if m.prefix != "" {
@@ -735,9 +864,9 @@ func (m model) View() tea.View {
 			content.WriteString("\n" + errorStyle.Render(m.err.Error()))
 		}
 		content.WriteString("\n\n")
-		help := "↑/↓ select • d download • x delete • r refresh • esc actions"
+		help := "↑/↓ select • p preview • d download • x delete • r refresh • esc actions"
 		if m.nextCursor != "" {
-			help = "↑/↓ select • n next page • d download • x delete • r refresh • esc actions"
+			help = "↑/↓ select • n next page • p preview • d download • x delete • r refresh • esc actions"
 		}
 		content.WriteString(mutedStyle.Render(help))
 	case resultScreen:
