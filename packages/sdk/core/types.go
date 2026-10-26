@@ -46,6 +46,11 @@ type ListResult struct {
 }
 type DeleteRequest struct{ Bucket, Key string }
 
+// BucketAdapter lists the buckets or stores visible to the configured credentials.
+type BucketAdapter interface {
+	ListBuckets(context.Context) ([]string, error)
+}
+
 // ObjectAdapter supports reading, listing, and deleting stored objects.
 type ObjectAdapter interface {
 	Get(context.Context, GetRequest) (GetResult, error)

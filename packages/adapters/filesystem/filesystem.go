@@ -186,6 +186,23 @@ func (a *Adapter) Delete(ctx context.Context, request core.DeleteRequest) error 
 	return root.Remove(name)
 }
 
+func (a *Adapter) ListBuckets(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(a.rootDir)
+	if err != nil {
+		return nil, err
+	}
+	buckets := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			buckets = append(buckets, entry.Name())
+		}
+	}
+	return buckets, nil
+}
+
 func (a *Adapter) objectPath(bucket, key string) (string, error) {
 	if bucket == "" || key == "" || !filepath.IsLocal(filepath.FromSlash(bucket)) || !filepath.IsLocal(filepath.FromSlash(key)) || bucket == "." || key == "." {
 		return "", fmt.Errorf("bucket and key must be relative paths")

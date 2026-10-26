@@ -266,3 +266,11 @@ func upstashPageLimit(n int) int {
 }
 
 var _ core.ObjectAdapter = (*Adapter)(nil)
+var _ core.BucketAdapter = (*Adapter)(nil)
+
+func (a *Adapter) ListBuckets(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return []string{a.bucket}, nil
+}

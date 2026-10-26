@@ -22,12 +22,14 @@ type TokenSource func(context.Context) (string, error)
 
 // Config configures the JSON API client.
 type Config struct {
+	ProjectID   string
 	TokenSource TokenSource
 	HTTPClient  *http.Client
 }
 
 // Adapter uploads to Google Cloud Storage.
 type Adapter struct {
+	projectID   string
 	tokenSource TokenSource
 	httpClient  *http.Client
 }
@@ -41,7 +43,7 @@ func New(config Config) (*Adapter, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Adapter{tokenSource: config.TokenSource, httpClient: client}, nil
+	return &Adapter{projectID: config.ProjectID, tokenSource: config.TokenSource, httpClient: client}, nil
 }
 
 // Upload writes an object through the JSON API.
@@ -183,3 +185,45 @@ func pageLimit(n int) int {
 }
 
 var _ core.ObjectAdapter = (*Adapter)(nil)
+var _ core.BucketAdapter = (*Adapter)(nil)
+
+func (a *Adapter) ListBuckets(ctx context.Context) ([]string, error) {
+	if a.projectID == "" {
+		return nil, fmt.Errorf("Google Cloud project ID is required to list buckets")
+	}
+	var buckets []string
+	pageToken := ""
+	for {
+		q := url.Values{"project": {a.projectID}, "maxResults": {"1000"}}
+		if pageToken != "" {
+			q.Set("pageToken", pageToken)
+		}
+		resp, err := a.objectRequest(ctx, http.MethodGet, "https://storage.googleapis.com/storage/v1/b?"+q.Encode())
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode/100 != 2 {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			return nil, fmt.Errorf("Google Cloud Storage bucket list failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+		}
+		var page struct {
+			Next  string `json:"nextPageToken"`
+			Items []struct {
+				Name string `json:"name"`
+			} `json:"items"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&page)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		for _, bucket := range page.Items {
+			buckets = append(buckets, bucket.Name)
+		}
+		if page.Next == "" {
+			return buckets, nil
+		}
+		pageToken = page.Next
+	}
+}

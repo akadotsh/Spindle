@@ -14,7 +14,7 @@ A provider-neutral Go SDK for uploading files to local or cloud storage.
 
 ## Current API
 
-Create a `sdk.Client` with `sdk.New(sdk.Config{Provider: ..., ...})`, then use `Upload`, `Get`, `List`, and `Delete`. Uploading an existing key replaces it where the provider permits it; Supabase replacement is controlled by its `Upsert` setting. `Get` returns a streaming body that the caller must close. `List` returns object metadata a page at a time, and does not download object contents. Provider-specific configuration is typed and selected in the same config. GCS calls Google's JSON API through standard HTTP, with an injectable OAuth access token source. A standard API key alone does not authorize object writes; an object's URL also does not imply public access.
+Create a `sdk.Client` with `sdk.New(sdk.Config{Provider: ..., ...})`, then use `Upload`, `Get`, `List`, and `Delete`; call `ListBuckets` to retrieve the visible bucket or store names. Uploading an existing key replaces it where the provider permits it; Supabase replacement is controlled by its `Upsert` setting. `Get` returns a streaming body that the caller must close. `List` returns object metadata a page at a time, and does not download object contents. Provider-specific configuration is typed and selected in the same config. GCS calls Google's JSON API through standard HTTP, with an injectable OAuth access token source. A standard API key alone does not authorize object writes; an object's URL also does not imply public access.
 
 ```go
 client, err := sdk.New(sdk.Config{
@@ -73,7 +73,7 @@ go run ./cmd/uploader --provider filesystem --root-dir ./uploads --bucket local 
 
 ## Run the terminal app
 
-The Bubble Tea app supports uploads and object browsing for filesystem, Google Cloud Storage, Supabase, Upstash Blob, and Vercel Blob. Browse lists metadata by bucket and optional prefix; select an object to download it into the current directory or delete it after confirmation. Secret fields are masked and provider profiles are stored in the operating system credential store (Keychain on macOS). Press `ctrl+e` on the upload form to update a saved profile.
+The Bubble Tea app supports uploads and object browsing for filesystem, Google Cloud Storage, Supabase, Upstash Blob, and Vercel Blob. Browse first lists available buckets or stores, then lists object metadata in the selected bucket. Select an object to download it into the current directory or delete it after confirmation. GCS setup asks for the project ID because bucket discovery needs it. Upstash uses a bucket scoped token and Vercel uses the store ID entered in setup, so those providers show that configured destination. Secret fields are masked and provider profiles are stored in the operating system credential store (Keychain on macOS). Press `ctrl+e` on the upload form to update a saved profile.
 
 Google Cloud Storage requires an OAuth access token, which expires and may need updating. Upstash requires S3-compatible credentials for the selected bucket; its bucket token must first be exchanged for those credentials.
 

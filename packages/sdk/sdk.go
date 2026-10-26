@@ -23,6 +23,7 @@ type ListRequest = core.ListRequest
 type ListResult = core.ListResult
 type DeleteRequest = core.DeleteRequest
 type ObjectAdapter = core.ObjectAdapter
+type BucketAdapter = core.BucketAdapter
 
 // Provider selects the storage provider.
 type Provider string
@@ -159,4 +160,16 @@ func (c *Client) Delete(ctx context.Context, request DeleteRequest) error {
 		return err
 	}
 	return a.Delete(ctx, request)
+}
+
+// ListBuckets returns the buckets or stores visible to the configured provider credentials.
+func (c *Client) ListBuckets(ctx context.Context) ([]string, error) {
+	if c == nil || c.adapter == nil {
+		return nil, fmt.Errorf("storage client has no adapter")
+	}
+	a, ok := c.adapter.(BucketAdapter)
+	if !ok {
+		return nil, fmt.Errorf("configured adapter does not support bucket listing")
+	}
+	return a.ListBuckets(ctx)
 }

@@ -226,3 +226,34 @@ func separator(prefix string) string {
 }
 
 var _ core.ObjectAdapter = (*Adapter)(nil)
+var _ core.BucketAdapter = (*Adapter)(nil)
+
+func (a *Adapter) ListBuckets(ctx context.Context) ([]string, error) {
+	endpoint := *a.projectURL
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/storage/v1/bucket"
+	resp, err := a.authorized(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("Supabase bucket list failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var rows []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		return nil, err
+	}
+	buckets := make([]string, 0, len(rows))
+	for _, row := range rows {
+		name := row.Name
+		if name == "" {
+			name = row.ID
+		}
+		buckets = append(buckets, name)
+	}
+	return buckets, nil
+}

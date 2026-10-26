@@ -27,7 +27,8 @@ const (
 	uploadFormScreen
 	uploadingScreen
 	resultScreen
-	browseFormScreen
+	bucketLoadingScreen
+	bucketScreen
 	listingScreen
 	browserScreen
 	objectConfirmScreen
@@ -50,6 +51,10 @@ type objectsListedMsg struct {
 	page sdk.ListResult
 	err  error
 }
+type bucketsListedMsg struct {
+	buckets []string
+	err     error
+}
 type objectFinishedMsg struct {
 	message string
 	err     error
@@ -68,6 +73,8 @@ type model struct {
 	err        error
 	action     int
 	objects    []sdk.Object
+	buckets    []string
+	bucketSel  int
 	objectSel  int
 	bucket     string
 	prefix     string
@@ -128,8 +135,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.screen = providerScreen
 			}
 			return m, nil
-		case browseFormScreen:
-			return m.updateBrowseForm(key)
+		case bucketScreen:
+			switch key.String() {
+			case "up", "k":
+				if m.bucketSel > 0 {
+					m.bucketSel--
+				}
+			case "down", "j":
+				if m.bucketSel < len(m.buckets)-1 {
+					m.bucketSel++
+				}
+			case "enter":
+				if len(m.buckets) > 0 {
+					m.bucket = m.buckets[m.bucketSel]
+					m.prefix = ""
+					m.status = ""
+					m.screen = listingScreen
+					return m, tea.Batch(m.spinner.Tick, listObjects(m.provider, m.profile, m.bucket, m.prefix, ""))
+				}
+			case "esc":
+				return m.enterActionScreen()
+			}
+			return m, nil
 		case browserScreen:
 			return m.updateBrowser(key)
 		case objectConfirmScreen:
@@ -161,6 +188,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = resultScreen
 			m.resultURL = msg.url
 			m.err = msg.err
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+	}
+	if m.screen == bucketLoadingScreen {
+		switch msg := msg.(type) {
+		case bucketsListedMsg:
+			m.buckets = msg.buckets
+			m.bucketSel = 0
+			m.err = msg.err
+			m.screen = bucketScreen
 			return m, nil
 		default:
 			var cmd tea.Cmd
@@ -321,50 +362,9 @@ func (m model) enterActionScreen() (tea.Model, tea.Cmd) {
 }
 
 func (m model) enterBrowseForm() (tea.Model, tea.Cmd) {
-	if m.provider == sdk.ProviderUpstash {
-		m.bucket = m.profile["Bucket"]
-	} else if m.provider == sdk.ProviderVercel {
-		m.bucket = m.profile["Store ID"]
-	}
-	if m.provider == sdk.ProviderUpstash || m.provider == sdk.ProviderVercel {
-		m.fields = []field{newField("Prefix (optional)", "images/", "", false, false)}
-	} else {
-		def := "assets"
-		if m.provider == sdk.ProviderFilesystem {
-			def = "local"
-		}
-		m.fields = []field{newField("Bucket", def, "", false, true), newField("Prefix (optional)", "images/", "", false, false)}
-	}
-	m.focused = 0
-	m.screen = browseFormScreen
-	return m, m.fields[0].input.Focus()
-}
-
-func (m model) updateBrowseForm(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch key.String() {
-	case "esc":
-		return m.enterActionScreen()
-	case "tab", "down":
-		return m.moveFocus(1)
-	case "shift+tab", "up":
-		return m.moveFocus(-1)
-	case "enter":
-		values, err := m.values()
-		if err != nil {
-			m.err = err
-			return m, nil
-		}
-		if m.provider != sdk.ProviderUpstash && m.provider != sdk.ProviderVercel {
-			m.bucket = values["Bucket"]
-		}
-		m.prefix = values["Prefix (optional)"]
-		m.status = ""
-		m.screen = listingScreen
-		return m, tea.Batch(m.spinner.Tick, listObjects(m.provider, m.profile, m.bucket, m.prefix, ""))
-	}
-	var cmd tea.Cmd
-	m.fields[m.focused].input, cmd = m.fields[m.focused].input.Update(key)
-	return m, cmd
+	m.screen = bucketLoadingScreen
+	m.err = nil
+	return m, tea.Batch(m.spinner.Tick, listBuckets(m.provider, m.profile))
 }
 
 func (m model) updateBrowser(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -428,6 +428,7 @@ func setupFieldsFor(provider sdk.Provider, values map[string]string) []field {
 	switch provider {
 	case sdk.ProviderGCS:
 		return []field{
+			newField("Google Cloud project ID", "my-project-id", get("Google Cloud project ID"), false, true),
 			newField("OAuth access token", "Google Cloud OAuth token", get("OAuth access token"), true, true),
 		}
 	case sdk.ProviderUpstash:
@@ -512,7 +513,7 @@ func clientFor(provider sdk.Provider, profile map[string]string) (*sdk.Client, e
 		config = sdk.Config{Provider: provider, Filesystem: &filesystemConfig}
 	case sdk.ProviderGCS:
 		token := profile["OAuth access token"]
-		gcsConfig := sdk.GCSConfig{TokenSource: func(context.Context) (string, error) { return token, nil }}
+		gcsConfig := sdk.GCSConfig{ProjectID: profile["Google Cloud project ID"], TokenSource: func(context.Context) (string, error) { return token, nil }}
 		config = sdk.Config{Provider: provider, GCS: &gcsConfig}
 	case sdk.ProviderSupabase:
 		supabaseConfig := sdk.SupabaseConfig{ProjectURL: profile["Project URL"], APIKey: profile["API key"]}
@@ -547,6 +548,17 @@ func listObjects(provider sdk.Provider, profile map[string]string, bucket, prefi
 		}
 		page, err := client.List(context.Background(), sdk.ListRequest{Bucket: bucket, Prefix: prefix, Cursor: cursor, Limit: 100})
 		return objectsListedMsg{page: page, err: err}
+	}
+}
+
+func listBuckets(provider sdk.Provider, profile map[string]string) tea.Cmd {
+	return func() tea.Msg {
+		client, err := clientFor(provider, profile)
+		if err != nil {
+			return bucketsListedMsg{err: err}
+		}
+		buckets, err := client.ListBuckets(context.Background())
+		return bucketsListedMsg{buckets: buckets, err: err}
 	}
 }
 
@@ -666,19 +678,26 @@ func (m model) View() tea.View {
 		} else {
 			content.WriteString(mutedStyle.Render("tab next • shift+tab previous • enter upload • ctrl+e credentials • esc providers"))
 		}
-	case browseFormScreen:
-		fmt.Fprintf(&content, "Browse %s\n\n", selectedStyle.Render(providerName(m.provider)))
-		for index, field := range m.fields {
-			label := field.name
-			if index == m.focused {
-				label = selectedStyle.Render(label)
+	case bucketLoadingScreen:
+		fmt.Fprintf(&content, "%s Fetching buckets for %s…\n", m.spinner.View(), providerName(m.provider))
+	case bucketScreen:
+		fmt.Fprintf(&content, "Choose a bucket or store (%d)\n\n", len(m.buckets))
+		content.WriteString(mutedStyle.Render(bucketScope(m.provider)) + "\n\n")
+		for i, bucket := range m.buckets {
+			mark := "  "
+			if i == m.bucketSel {
+				mark = "› "
+				bucket = selectedStyle.Render(bucket)
 			}
-			fmt.Fprintf(&content, "%s\n%s\n\n", label, field.input.View())
+			fmt.Fprintf(&content, "%s%s\n", mark, bucket)
+		}
+		if len(m.buckets) == 0 && m.err == nil {
+			content.WriteString(mutedStyle.Render("No buckets found.\n"))
 		}
 		if m.err != nil {
-			content.WriteString(errorStyle.Render(m.err.Error()) + "\n\n")
+			content.WriteString(errorStyle.Render(m.err.Error()) + "\n")
 		}
-		content.WriteString(mutedStyle.Render("tab next • enter list objects • esc back"))
+		content.WriteString("\n" + mutedStyle.Render("↑/↓ select • enter open bucket • esc actions"))
 	case uploadingScreen:
 		fmt.Fprintf(&content, "%s Uploading to %s…\n", m.spinner.View(), m.provider)
 	case listingScreen:
@@ -741,6 +760,17 @@ func (m model) View() tea.View {
 	view.AltScreen = true
 	view.WindowTitle = "File Uploader"
 	return view
+}
+
+func bucketScope(provider sdk.Provider) string {
+	switch provider {
+	case sdk.ProviderUpstash:
+		return "Showing the bucket configured for this scoped token."
+	case sdk.ProviderVercel:
+		return "Showing the configured Vercel Blob store."
+	default:
+		return "Showing buckets visible to these credentials."
+	}
 }
 
 func formatSize(size int64) string {
