@@ -66,7 +66,6 @@ type objectFinishedMsg struct {
 }
 type previewFinishedMsg struct {
 	content, clear string
-	kitty          bool
 	err            error
 }
 
@@ -96,7 +95,6 @@ type model struct {
 	height        int
 	preview       string
 	previewClear  string
-	previewKitty  bool
 	clearGraphics string
 }
 
@@ -245,7 +243,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = previewScreen
 			m.preview = msg.content
 			m.previewClear = msg.clear
-			m.previewKitty = msg.kitty
 			m.err = msg.err
 			return m, nil
 		default:
@@ -695,11 +692,11 @@ func previewObject(provider sdk.Provider, profile map[string]string, object sdk.
 		if err != nil {
 			return previewFinishedMsg{err: fmt.Errorf("decode image: %w", err)}
 		}
-		content, clear, kitty, err := renderImagePreview(img, cols, rows)
+		content, clear, err := renderImagePreview(img, cols, rows)
 		if err != nil {
 			return previewFinishedMsg{err: err}
 		}
-		return previewFinishedMsg{content: content, clear: clear, kitty: kitty}
+		return previewFinishedMsg{content: content, clear: clear}
 	}
 }
 
@@ -831,11 +828,7 @@ func (m model) View() tea.View {
 		} else {
 			content.WriteString(m.preview)
 			content.WriteString("\n\n")
-			mode := "text fallback"
-			if m.previewKitty {
-				mode = "Kitty graphics"
-			}
-			content.WriteString(mutedStyle.Render(mode))
+			content.WriteString(mutedStyle.Render("Kitty graphics"))
 		}
 		content.WriteString(" • esc back")
 	case browserScreen:
