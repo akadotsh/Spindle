@@ -109,6 +109,9 @@ func (a *Adapter) authorized(ctx context.Context, method, endpoint string, body 
 		return nil, err
 	}
 	req.Header.Set("apikey", a.apiKey)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if a.token != nil {
 		token, e := a.token(ctx)
 		if e != nil {
@@ -196,14 +199,7 @@ func (a *Adapter) Delete(ctx context.Context, r core.DeleteRequest) error {
 	body, _ := json.Marshal(map[string][]string{"prefixes": {r.Key}})
 	endpoint := *a.projectURL
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/storage/v1/object/" + url.PathEscape(r.Bucket)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), strings.NewReader(string(body)))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("apikey", a.apiKey)
-	req.Header.Set("Authorization", "Bearer "+a.apiKey)
-	resp, err := a.client.Do(req)
+	resp, err := a.authorized(ctx, http.MethodPost, endpoint.String(), strings.NewReader(string(body)))
 	if err != nil {
 		return err
 	}

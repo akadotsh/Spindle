@@ -73,7 +73,7 @@ go run ./cmd/uploader --provider filesystem --root-dir ./uploads --bucket local 
 
 ## Run the terminal app
 
-The Bubble Tea app supports filesystem, Google Cloud Storage, Supabase, Upstash Blob, and Vercel Blob uploads. On first use, cloud providers open a setup step for credentials, then continue to the upload form. Secret fields are masked and the provider profile is stored in the operating system credential store (Keychain on macOS). Press `ctrl+e` on the upload form to update a saved profile.
+The Bubble Tea app supports uploads and object browsing for filesystem, Google Cloud Storage, Supabase, Upstash Blob, and Vercel Blob. Browse lists metadata by bucket and optional prefix; select an object to download it into the current directory or delete it after confirmation. Secret fields are masked and provider profiles are stored in the operating system credential store (Keychain on macOS). Press `ctrl+e` on the upload form to update a saved profile.
 
 Google Cloud Storage requires an OAuth access token, which expires and may need updating. Upstash requires S3-compatible credentials for the selected bucket; its bucket token must first be exchanged for those credentials.
 
