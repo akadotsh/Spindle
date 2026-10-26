@@ -671,10 +671,10 @@ func previewObject(provider sdk.Provider, profile map[string]string, object sdk.
 		}
 		defer result.Body.Close()
 		contentType := result.Object.ContentType
-		if contentType == "" {
-			contentType = mime.TypeByExtension(filepath.Ext(object.Key))
+		if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+			contentType = mime.TypeByExtension(strings.ToLower(filepath.Ext(object.Key)))
 		}
-		if !strings.HasPrefix(contentType, "image/") {
+		if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
 			return previewFinishedMsg{err: fmt.Errorf("%s is not an image", object.Key)}
 		}
 		data, err := io.ReadAll(io.LimitReader(result.Body, maxPreviewBytes+1))
