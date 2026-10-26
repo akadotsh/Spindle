@@ -827,9 +827,8 @@ func (m model) View() tea.View {
 			content.WriteString(errorStyle.Render(m.err.Error()))
 		} else {
 			content.WriteString(m.preview)
-			content.WriteString("\n\n")
-			content.WriteString(mutedStyle.Render("Kitty graphics"))
 		}
+		content.WriteString("\n\n")
 		content.WriteString(" • esc back")
 	case browserScreen:
 		fmt.Fprintf(&content, "Objects in %s", m.bucket)

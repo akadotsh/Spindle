@@ -25,9 +25,9 @@ func renderImagePreview(src image.Image, cols, rows int) (string, string, error)
 	}
 	cols = max(1, cols)
 	rows = max(1, rows)
-	pixels, width, height := fitRGBA(src, cols*8, rows*16)
-	imageCols := max(1, int(math.Round(float64(width)/8)))
-	imageRows := max(1, int(math.Round(float64(height)/16)))
+	pixels, width, height := fitRGBA(src, cols*16, rows*32)
+	imageCols := max(1, int(math.Round(float64(width)/16)))
+	imageRows := max(1, int(math.Round(float64(height)/32)))
 	kitty, clear, err := kittyImage(pixels, width, height, imageCols, imageRows)
 	return kitty, clear, err
 }
