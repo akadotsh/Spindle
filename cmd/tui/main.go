@@ -32,6 +32,8 @@ const (
 	resultScreen
 	bucketLoadingScreen
 	bucketScreen
+	bucketConfirmScreen
+	bucketDeletingScreen
 	listingScreen
 	browserScreen
 	previewLoadingScreen
@@ -59,6 +61,10 @@ type objectsListedMsg struct {
 type bucketsListedMsg struct {
 	buckets []string
 	err     error
+}
+type bucketDeleteFinishedMsg struct {
+	bucket string
+	err    error
 }
 type objectFinishedMsg struct {
 	message string
@@ -91,6 +97,7 @@ type model struct {
 	nextCursor    string
 	status        string
 	deleteKey     string
+	deleteBucket  string
 	width         int
 	height        int
 	preview       string
@@ -172,8 +179,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.screen = listingScreen
 					return m, tea.Batch(m.spinner.Tick, listObjects(m.provider, m.profile, m.bucket, m.prefix, ""))
 				}
+			case "x":
+				if len(m.buckets) > 0 {
+					m.deleteBucket = m.buckets[m.bucketSel]
+					m.err = nil
+					m.status = ""
+					m.screen = bucketConfirmScreen
+				}
 			case "esc":
 				return m.enterActionScreen()
+			}
+			return m, nil
+		case bucketConfirmScreen:
+			switch key.String() {
+			case "y":
+				m.screen = bucketDeletingScreen
+				return m, tea.Batch(m.spinner.Tick, deleteBucket(m.provider, m.profile, m.deleteBucket))
+			case "n", "esc":
+				m.deleteBucket = ""
+				m.screen = bucketScreen
 			}
 			return m, nil
 		case browserScreen:
@@ -230,6 +254,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.bucketSel = 0
 			m.err = msg.err
 			m.screen = bucketScreen
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+	}
+	if m.screen == bucketDeletingScreen {
+		switch msg := msg.(type) {
+		case bucketDeleteFinishedMsg:
+			m.screen = bucketScreen
+			m.err = msg.err
+			if msg.err == nil {
+				for i, bucket := range m.buckets {
+					if bucket == msg.bucket {
+						m.buckets = append(m.buckets[:i], m.buckets[i+1:]...)
+						break
+					}
+				}
+				if m.bucketSel >= len(m.buckets) && m.bucketSel > 0 {
+					m.bucketSel--
+				}
+				m.status = "Bucket deleted: " + msg.bucket
+			}
+			m.deleteBucket = ""
 			return m, nil
 		default:
 			var cmd tea.Cmd
@@ -406,6 +455,7 @@ func (m model) enterActionScreen() (tea.Model, tea.Cmd) {
 func (m model) enterBrowseForm() (tea.Model, tea.Cmd) {
 	m.screen = bucketLoadingScreen
 	m.err = nil
+	m.status = ""
 	return m, tea.Batch(m.spinner.Tick, listBuckets(m.provider, m.profile))
 }
 
@@ -715,6 +765,16 @@ func deleteObject(provider sdk.Provider, profile map[string]string, bucket, key 
 	}
 }
 
+func deleteBucket(provider sdk.Provider, profile map[string]string, bucket string) tea.Cmd {
+	return func() tea.Msg {
+		client, err := clientFor(provider, profile)
+		if err == nil {
+			err = client.DeleteBucket(context.Background(), sdk.DeleteBucketRequest{Bucket: bucket})
+		}
+		return bucketDeleteFinishedMsg{bucket: bucket, err: err}
+	}
+}
+
 func (m model) View() tea.View {
 	var content strings.Builder
 	content.WriteString(m.clearGraphics)
@@ -803,7 +863,15 @@ func (m model) View() tea.View {
 		if m.err != nil {
 			content.WriteString(errorStyle.Render(m.err.Error()) + "\n")
 		}
-		content.WriteString("\n" + mutedStyle.Render("↑/↓ select • enter open bucket • esc actions"))
+		if m.status != "" {
+			content.WriteString(successStyle.Render(m.status) + "\n")
+		}
+		content.WriteString("\n" + mutedStyle.Render("↑/↓ select • enter open • x delete bucket • esc actions"))
+	case bucketConfirmScreen:
+		fmt.Fprintf(&content, "Delete bucket?\n\n%s\n\nThis only succeeds if the bucket is empty.\n\n", m.deleteBucket)
+		content.WriteString(mutedStyle.Render("y confirm • n/esc cancel"))
+	case bucketDeletingScreen:
+		fmt.Fprintf(&content, "%s Deleting bucket…\n", m.spinner.View())
 	case uploadingScreen:
 		fmt.Fprintf(&content, "%s Uploading to %s…\n", m.spinner.View(), m.provider)
 	case listingScreen:
