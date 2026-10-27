@@ -21,7 +21,7 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("uploader", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	provider := flags.String("provider", "supabase", "upload provider: supabase or filesystem")
+	provider := flags.String("provider", "supabase", "upload provider: supabase, filesystem, or uploadthing")
 	bucket := flags.String("bucket", "", "bucket name or filesystem subdirectory")
 	key := flags.String("key", "", "object key")
 	filePath := flags.String("file", "", "file to upload")
@@ -29,8 +29,8 @@ func run(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *bucket == "" || *key == "" || *filePath == "" {
-		return errors.New("usage: go run ./cmd/uploader --bucket BUCKET --key OBJECT_KEY --file PATH")
+	if (*provider != string(sdk.ProviderUploadThing) && *bucket == "") || *key == "" || *filePath == "" {
+		return errors.New("usage: go run ./cmd/uploader --key KEY --file PATH (add --bucket for bucket providers)")
 	}
 	var config sdk.Config
 	switch sdk.Provider(*provider) {
@@ -48,6 +48,13 @@ func run(args []string) error {
 	case sdk.ProviderFilesystem:
 		filesystemConfig := sdk.FilesystemConfig{RootDir: *rootDir}
 		config = sdk.Config{Provider: sdk.ProviderFilesystem, Filesystem: &filesystemConfig}
+	case sdk.ProviderUploadThing:
+		token := os.Getenv("UPLOADTHING_TOKEN")
+		if token == "" {
+			return errors.New("set UPLOADTHING_TOKEN")
+		}
+		uploadThingConfig := sdk.UploadThingConfig{Token: token}
+		config = sdk.Config{Provider: sdk.ProviderUploadThing, UploadThing: &uploadThingConfig}
 	default:
 		return fmt.Errorf("unsupported CLI provider %q", *provider)
 	}

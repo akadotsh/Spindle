@@ -16,6 +16,13 @@ A provider-neutral Go SDK for uploading files to local or cloud storage.
 
 Create a `sdk.Client` with `sdk.New(sdk.Config{Provider: ..., ...})`, then use `Upload`, `Get`, `List`, and `Delete`; call `ListBuckets` to retrieve visible bucket or store names and `DeleteBucket` to delete an empty bucket where supported. Bucket deletion is available for filesystem, GCS, and Supabase adapters. Uploading an existing key replaces it where the provider permits it; Supabase replacement is controlled by its `Upsert` setting. `Get` returns a streaming body that the caller must close. `List` returns object metadata a page at a time, and does not download object contents. Provider-specific configuration is typed and selected in the same config. GCS calls Google's JSON API through standard HTTP, with an injectable OAuth access token source. A standard API key alone does not authorize object writes; an object's URL also does not imply public access.
 
+UploadThing uploads use the dashboard's `UPLOADTHING_TOKEN` and the REST API. UploadThing is application scoped, so the adapter supports uploads but not bucket browsing or object CRUD yet. The `--key` value is used as the uploaded file name. The upload source is staged in temporary files so the adapter can provide the file size required by UploadThing.
+
+```sh
+export UPLOADTHING_TOKEN="<dashboard token>"
+go run ./cmd/uploader --provider uploadthing --key logo.png --file ./logo.png
+```
+
 ```go
 client, err := sdk.New(sdk.Config{
 	Provider: sdk.ProviderGCS,

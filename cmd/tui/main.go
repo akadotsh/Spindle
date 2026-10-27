@@ -120,6 +120,7 @@ func initialModel() model {
 			sdk.ProviderGCS,
 			sdk.ProviderSupabase,
 			sdk.ProviderUpstash,
+			sdk.ProviderUploadThing,
 			sdk.ProviderVercel,
 		},
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
@@ -151,7 +152,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case actionScreen:
 			switch key.String() {
 			case "up", "k", "down", "j":
-				m.action = 1 - m.action
+				if m.provider != sdk.ProviderUploadThing {
+					m.action = 1 - m.action
+				}
 			case "enter":
 				if m.action == 0 {
 					return m.enterUploadForm()
@@ -558,6 +561,8 @@ func setupFieldsFor(provider sdk.Provider, values map[string]string) []field {
 			newField("Store ID", "Vercel Blob store ID", get("Store ID"), false, true),
 			newField("Access (public/private)", "public", defaultValue(get("Access (public/private)"), "public"), false, true),
 		}
+	case sdk.ProviderUploadThing:
+		return []field{newField("UploadThing token", "Base64 token from UploadThing dashboard", get("UploadThing token"), true, true)}
 	default:
 		return []field{
 			newField("Project URL", "https://project.supabase.co", defaultValue(get("Project URL"), os.Getenv("SUPABASE_PROJECT_URL")), false, true),
@@ -570,6 +575,9 @@ func setupFieldsFor(provider sdk.Provider, values map[string]string) []field {
 func uploadFieldsFor(provider sdk.Provider) []field {
 	source := newField("Source file", "./path/to/file", "", false, true)
 	key := newField("Object key", "images/photo.png", "", false, true)
+	if provider == sdk.ProviderUploadThing {
+		return []field{source, newField("File name", "photo.png", "", false, true)}
+	}
 	if provider == sdk.ProviderUpstash || provider == sdk.ProviderVercel {
 		return []field{source, key}
 	}
@@ -611,7 +619,11 @@ func upload(provider sdk.Provider, profile, values map[string]string) tea.Cmd {
 		if err != nil {
 			return uploadFinishedMsg{err: err}
 		}
-		result, err := client.Upload(context.Background(), sdk.UploadRequest{Source: file, Bucket: values["Bucket"], Key: values["Object key"]})
+		key := values["Object key"]
+		if provider == sdk.ProviderUploadThing {
+			key = values["File name"]
+		}
+		result, err := client.Upload(context.Background(), sdk.UploadRequest{Source: file, Bucket: values["Bucket"], Key: key})
 		return uploadFinishedMsg{url: result.URL, err: err}
 	}
 }
@@ -645,6 +657,9 @@ func clientFor(provider sdk.Provider, profile map[string]string) (*sdk.Client, e
 	case sdk.ProviderVercel:
 		vercelConfig := sdk.VercelConfig{Token: profile["Blob token"], StoreID: profile["Store ID"], Access: profile["Access (public/private)"]}
 		config = sdk.Config{Provider: provider, Vercel: &vercelConfig}
+	case sdk.ProviderUploadThing:
+		uploadThingConfig := sdk.UploadThingConfig{Token: profile["UploadThing token"]}
+		config = sdk.Config{Provider: provider, UploadThing: &uploadThingConfig}
 	default:
 		return nil, fmt.Errorf("unsupported TUI provider %q", provider)
 	}
@@ -817,7 +832,11 @@ func (m model) View() tea.View {
 		content.WriteString(mutedStyle.Render("tab next • shift+tab previous • enter save and continue • esc back"))
 	case actionScreen:
 		fmt.Fprintf(&content, "Provider: %s\n\nChoose an action\n\n", selectedStyle.Render(providerName(m.provider)))
-		for i, label := range []string{"Upload a file", "Browse objects"} {
+		actions := []string{"Upload a file", "Browse objects"}
+		if m.provider == sdk.ProviderUploadThing {
+			actions = actions[:1]
+		}
+		for i, label := range actions {
 			mark := "  "
 			if i == m.action {
 				mark = "› "
@@ -981,6 +1000,8 @@ func providerName(provider sdk.Provider) string {
 		return "Upstash Blob"
 	case sdk.ProviderVercel:
 		return "Vercel Blob"
+	case sdk.ProviderUploadThing:
+		return "UploadThing"
 	default:
 		return string(provider)
 	}

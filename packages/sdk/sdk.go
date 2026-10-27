@@ -8,6 +8,7 @@ import (
 	"github.com/akashprasad/file-uploader/packages/adapters/filesystem"
 	"github.com/akashprasad/file-uploader/packages/adapters/gcs"
 	"github.com/akashprasad/file-uploader/packages/adapters/supabase"
+	"github.com/akashprasad/file-uploader/packages/adapters/uploadthing"
 	"github.com/akashprasad/file-uploader/packages/adapters/upstash"
 	"github.com/akashprasad/file-uploader/packages/adapters/vercel"
 	"github.com/akashprasad/file-uploader/packages/sdk/core"
@@ -31,11 +32,12 @@ type BucketDeleter = core.BucketDeleter
 type Provider string
 
 const (
-	ProviderGCS        Provider = "gcs"
-	ProviderFilesystem Provider = "filesystem"
-	ProviderSupabase   Provider = "supabase"
-	ProviderUpstash    Provider = "upstash"
-	ProviderVercel     Provider = "vercel"
+	ProviderGCS         Provider = "gcs"
+	ProviderFilesystem  Provider = "filesystem"
+	ProviderSupabase    Provider = "supabase"
+	ProviderUpstash     Provider = "upstash"
+	ProviderUploadThing Provider = "uploadthing"
+	ProviderVercel      Provider = "vercel"
 )
 
 type GCSConfig = gcs.Config
@@ -43,16 +45,18 @@ type FilesystemConfig = filesystem.Config
 type SupabaseConfig = supabase.Config
 type UpstashConfig = upstash.Config
 type UpstashCredentials = upstash.Credentials
+type UploadThingConfig = uploadthing.Config
 type VercelConfig = vercel.Config
 
 // Config selects a provider and its credentials.
 type Config struct {
-	Provider   Provider
-	GCS        *GCSConfig
-	Filesystem *FilesystemConfig
-	Supabase   *SupabaseConfig
-	Upstash    *UpstashConfig
-	Vercel     *VercelConfig
+	Provider    Provider
+	GCS         *GCSConfig
+	Filesystem  *FilesystemConfig
+	Supabase    *SupabaseConfig
+	Upstash     *UpstashConfig
+	UploadThing *UploadThingConfig
+	Vercel      *VercelConfig
 }
 
 // Client uploads files to its configured provider.
@@ -64,7 +68,7 @@ type Client struct {
 func New(config Config) (*Client, error) {
 	switch config.Provider {
 	case ProviderFilesystem:
-		if config.Filesystem == nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Vercel != nil {
+		if config.Filesystem == nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.UploadThing != nil || config.Vercel != nil {
 			return nil, fmt.Errorf("provide only filesystem configuration when provider is %q", config.Provider)
 		}
 		adapter, err := filesystem.New(*config.Filesystem)
@@ -73,7 +77,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderGCS:
-		if config.GCS == nil || config.Filesystem != nil || config.Supabase != nil || config.Upstash != nil || config.Vercel != nil {
+		if config.GCS == nil || config.Filesystem != nil || config.Supabase != nil || config.Upstash != nil || config.UploadThing != nil || config.Vercel != nil {
 			return nil, fmt.Errorf("provide only GCS configuration when provider is %q", config.Provider)
 		}
 		adapter, err := gcs.New(*config.GCS)
@@ -82,7 +86,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderUpstash:
-		if config.Upstash == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Vercel != nil {
+		if config.Upstash == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.UploadThing != nil || config.Vercel != nil {
 			return nil, fmt.Errorf("provide only Upstash configuration when provider is %q", config.Provider)
 		}
 		adapter, err := upstash.New(*config.Upstash)
@@ -91,7 +95,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderVercel:
-		if config.Vercel == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil {
+		if config.Vercel == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.UploadThing != nil {
 			return nil, fmt.Errorf("provide only Vercel configuration when provider is %q", config.Provider)
 		}
 		adapter, err := vercel.New(*config.Vercel)
@@ -99,8 +103,17 @@ func New(config Config) (*Client, error) {
 			return nil, err
 		}
 		return NewWithAdapter(adapter), nil
+	case ProviderUploadThing:
+		if config.UploadThing == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Vercel != nil {
+			return nil, fmt.Errorf("provide only UploadThing configuration when provider is %q", config.Provider)
+		}
+		adapter, err := uploadthing.New(*config.UploadThing)
+		if err != nil {
+			return nil, err
+		}
+		return NewWithAdapter(adapter), nil
 	case ProviderSupabase:
-		if config.Supabase == nil || config.Filesystem != nil || config.GCS != nil || config.Upstash != nil || config.Vercel != nil {
+		if config.Supabase == nil || config.Filesystem != nil || config.GCS != nil || config.Upstash != nil || config.UploadThing != nil || config.Vercel != nil {
 			return nil, fmt.Errorf("provide only Supabase configuration when provider is %q", config.Provider)
 		}
 		adapter, err := supabase.New(*config.Supabase)
