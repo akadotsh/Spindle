@@ -257,3 +257,21 @@ func (a *Adapter) ListBuckets(ctx context.Context) ([]string, error) {
 	}
 	return buckets, nil
 }
+
+func (a *Adapter) DeleteBucket(ctx context.Context, r core.DeleteBucketRequest) error {
+	if r.Bucket == "" {
+		return fmt.Errorf("bucket is required")
+	}
+	endpoint := *a.projectURL
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/storage/v1/bucket/" + url.PathEscape(r.Bucket)
+	resp, err := a.authorized(ctx, http.MethodDelete, endpoint.String(), nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("Supabase Storage bucket delete failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return nil
+}

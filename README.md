@@ -14,7 +14,7 @@ A provider-neutral Go SDK for uploading files to local or cloud storage.
 
 ## Current API
 
-Create a `sdk.Client` with `sdk.New(sdk.Config{Provider: ..., ...})`, then use `Upload`, `Get`, `List`, and `Delete`; call `ListBuckets` to retrieve the visible bucket or store names. Uploading an existing key replaces it where the provider permits it; Supabase replacement is controlled by its `Upsert` setting. `Get` returns a streaming body that the caller must close. `List` returns object metadata a page at a time, and does not download object contents. Provider-specific configuration is typed and selected in the same config. GCS calls Google's JSON API through standard HTTP, with an injectable OAuth access token source. A standard API key alone does not authorize object writes; an object's URL also does not imply public access.
+Create a `sdk.Client` with `sdk.New(sdk.Config{Provider: ..., ...})`, then use `Upload`, `Get`, `List`, and `Delete`; call `ListBuckets` to retrieve visible bucket or store names and `DeleteBucket` to delete an empty bucket where supported. Bucket deletion is available for filesystem, GCS, and Supabase adapters. Uploading an existing key replaces it where the provider permits it; Supabase replacement is controlled by its `Upsert` setting. `Get` returns a streaming body that the caller must close. `List` returns object metadata a page at a time, and does not download object contents. Provider-specific configuration is typed and selected in the same config. GCS calls Google's JSON API through standard HTTP, with an injectable OAuth access token source. A standard API key alone does not authorize object writes; an object's URL also does not imply public access.
 
 ```go
 client, err := sdk.New(sdk.Config{

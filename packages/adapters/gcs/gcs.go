@@ -174,6 +174,23 @@ func (a *Adapter) Delete(ctx context.Context, r core.DeleteRequest) error {
 	return nil
 }
 
+func (a *Adapter) DeleteBucket(ctx context.Context, r core.DeleteBucketRequest) error {
+	if r.Bucket == "" {
+		return fmt.Errorf("bucket is required")
+	}
+	u := "https://storage.googleapis.com/storage/v1/b/" + url.PathEscape(r.Bucket)
+	resp, err := a.objectRequest(ctx, http.MethodDelete, u)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("Google Cloud Storage bucket delete failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
 func pageLimit(n int) int {
 	if n <= 0 {
 		return 100
@@ -186,6 +203,7 @@ func pageLimit(n int) int {
 
 var _ core.ObjectAdapter = (*Adapter)(nil)
 var _ core.BucketAdapter = (*Adapter)(nil)
+var _ core.BucketDeleter = (*Adapter)(nil)
 
 func (a *Adapter) ListBuckets(ctx context.Context) ([]string, error) {
 	if a.projectID == "" {

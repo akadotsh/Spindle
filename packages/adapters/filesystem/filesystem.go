@@ -203,6 +203,23 @@ func (a *Adapter) ListBuckets(ctx context.Context) ([]string, error) {
 	return buckets, nil
 }
 
+func (a *Adapter) DeleteBucket(ctx context.Context, request core.DeleteBucketRequest) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if request.Bucket == "" || request.Bucket == "." || !filepath.IsLocal(filepath.FromSlash(request.Bucket)) {
+		return fmt.Errorf("bucket must be a relative path")
+	}
+	root, err := os.OpenRoot(a.rootDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.Remove(filepath.FromSlash(request.Bucket))
+}
+
+var _ core.BucketDeleter = (*Adapter)(nil)
+
 func (a *Adapter) objectPath(bucket, key string) (string, error) {
 	if bucket == "" || key == "" || !filepath.IsLocal(filepath.FromSlash(bucket)) || !filepath.IsLocal(filepath.FromSlash(key)) || bucket == "." || key == "." {
 		return "", fmt.Errorf("bucket and key must be relative paths")

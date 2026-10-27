@@ -22,8 +22,10 @@ type GetResult = core.GetResult
 type ListRequest = core.ListRequest
 type ListResult = core.ListResult
 type DeleteRequest = core.DeleteRequest
+type DeleteBucketRequest = core.DeleteBucketRequest
 type ObjectAdapter = core.ObjectAdapter
 type BucketAdapter = core.BucketAdapter
+type BucketDeleter = core.BucketDeleter
 
 // Provider selects the storage provider.
 type Provider string
@@ -172,4 +174,16 @@ func (c *Client) ListBuckets(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("configured adapter does not support bucket listing")
 	}
 	return a.ListBuckets(ctx)
+}
+
+// DeleteBucket removes an empty bucket when the provider supports it.
+func (c *Client) DeleteBucket(ctx context.Context, request DeleteBucketRequest) error {
+	if c == nil || c.adapter == nil {
+		return fmt.Errorf("storage client has no adapter")
+	}
+	a, ok := c.adapter.(BucketDeleter)
+	if !ok {
+		return fmt.Errorf("configured adapter does not support bucket deletion")
+	}
+	return a.DeleteBucket(ctx, request)
 }
