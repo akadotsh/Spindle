@@ -122,6 +122,7 @@ func initialModel() model {
 			sdk.ProviderUpstash,
 			sdk.ProviderUploadThing,
 			sdk.ProviderVercel,
+			sdk.ProviderCloudinary,
 		},
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
 	}
@@ -152,7 +153,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case actionScreen:
 			switch key.String() {
 			case "up", "k", "down", "j":
-				if m.provider != sdk.ProviderUploadThing {
+				if m.provider != sdk.ProviderUploadThing && m.provider != sdk.ProviderCloudinary {
 					m.action = 1 - m.action
 				}
 			case "enter":
@@ -563,6 +564,12 @@ func setupFieldsFor(provider sdk.Provider, values map[string]string) []field {
 		}
 	case sdk.ProviderUploadThing:
 		return []field{newField("UploadThing token", "Base64 token from UploadThing dashboard", get("UploadThing token"), true, true)}
+	case sdk.ProviderCloudinary:
+		return []field{
+			newField("Cloud name", "Cloudinary cloud name", get("Cloud name"), false, true),
+			newField("API key", "Cloudinary API key", get("API key"), false, true),
+			newField("API secret", "Cloudinary API secret", get("API secret"), true, true),
+		}
 	default:
 		return []field{
 			newField("Project URL", "https://project.supabase.co", defaultValue(get("Project URL"), os.Getenv("SUPABASE_PROJECT_URL")), false, true),
@@ -577,6 +584,9 @@ func uploadFieldsFor(provider sdk.Provider) []field {
 	key := newField("Object key", "images/photo.png", "", false, true)
 	if provider == sdk.ProviderUploadThing {
 		return []field{source, newField("File name", "photo.png", "", false, true)}
+	}
+	if provider == sdk.ProviderCloudinary {
+		return []field{source, newField("Public ID", "images/photo (no extension)", "", false, true)}
 	}
 	if provider == sdk.ProviderUpstash || provider == sdk.ProviderVercel {
 		return []field{source, key}
@@ -622,6 +632,8 @@ func upload(provider sdk.Provider, profile, values map[string]string) tea.Cmd {
 		key := values["Object key"]
 		if provider == sdk.ProviderUploadThing {
 			key = values["File name"]
+		} else if provider == sdk.ProviderCloudinary {
+			key = values["Public ID"]
 		}
 		result, err := client.Upload(context.Background(), sdk.UploadRequest{Source: file, Bucket: values["Bucket"], Key: key})
 		return uploadFinishedMsg{url: result.URL, err: err}
@@ -660,6 +672,9 @@ func clientFor(provider sdk.Provider, profile map[string]string) (*sdk.Client, e
 	case sdk.ProviderUploadThing:
 		uploadThingConfig := sdk.UploadThingConfig{Token: profile["UploadThing token"]}
 		config = sdk.Config{Provider: provider, UploadThing: &uploadThingConfig}
+	case sdk.ProviderCloudinary:
+		cloudinaryConfig := sdk.CloudinaryConfig{CloudName: profile["Cloud name"], APIKey: profile["API key"], APISecret: profile["API secret"]}
+		config = sdk.Config{Provider: provider, Cloudinary: &cloudinaryConfig}
 	default:
 		return nil, fmt.Errorf("unsupported TUI provider %q", provider)
 	}
@@ -833,7 +848,7 @@ func (m model) View() tea.View {
 	case actionScreen:
 		fmt.Fprintf(&content, "Provider: %s\n\nChoose an action\n\n", selectedStyle.Render(providerName(m.provider)))
 		actions := []string{"Upload a file", "Browse objects"}
-		if m.provider == sdk.ProviderUploadThing {
+		if m.provider == sdk.ProviderUploadThing || m.provider == sdk.ProviderCloudinary {
 			actions = actions[:1]
 		}
 		for i, label := range actions {
@@ -1002,6 +1017,8 @@ func providerName(provider sdk.Provider) string {
 		return "Vercel Blob"
 	case sdk.ProviderUploadThing:
 		return "UploadThing"
+	case sdk.ProviderCloudinary:
+		return "Cloudinary"
 	default:
 		return string(provider)
 	}

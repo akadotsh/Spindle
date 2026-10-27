@@ -21,7 +21,7 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("uploader", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	provider := flags.String("provider", "supabase", "upload provider: supabase, filesystem, or uploadthing")
+	provider := flags.String("provider", "supabase", "upload provider: supabase, filesystem, uploadthing, or cloudinary")
 	bucket := flags.String("bucket", "", "bucket name or filesystem subdirectory")
 	key := flags.String("key", "", "object key")
 	filePath := flags.String("file", "", "file to upload")
@@ -29,8 +29,9 @@ func run(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if (*provider != string(sdk.ProviderUploadThing) && *bucket == "") || *key == "" || *filePath == "" {
-		return errors.New("usage: go run ./cmd/uploader --key KEY --file PATH (add --bucket for bucket providers)")
+	needsBucket := *provider != string(sdk.ProviderUploadThing) && *provider != string(sdk.ProviderCloudinary)
+	if (needsBucket && *bucket == "") || *key == "" || *filePath == "" {
+		return errors.New("usage: go run ./cmd/uploader --key KEY --file PATH (add --bucket for bucket providers; Cloudinary keys omit the image extension)")
 	}
 	var config sdk.Config
 	switch sdk.Provider(*provider) {
@@ -55,6 +56,9 @@ func run(args []string) error {
 		}
 		uploadThingConfig := sdk.UploadThingConfig{Token: token}
 		config = sdk.Config{Provider: sdk.ProviderUploadThing, UploadThing: &uploadThingConfig}
+	case sdk.ProviderCloudinary:
+		cloudinaryConfig := sdk.CloudinaryConfig{CloudName: os.Getenv("CLOUDINARY_CLOUD_NAME"), APIKey: os.Getenv("CLOUDINARY_API_KEY"), APISecret: os.Getenv("CLOUDINARY_API_SECRET")}
+		config = sdk.Config{Provider: sdk.ProviderCloudinary, Cloudinary: &cloudinaryConfig}
 	default:
 		return fmt.Errorf("unsupported CLI provider %q", *provider)
 	}
