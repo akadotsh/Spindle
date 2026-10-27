@@ -12,6 +12,7 @@ A provider-neutral Go SDK for uploading files to local or cloud storage.
 - `packages/adapters/upstash`: Upstash Blob adapter using its S3-compatible API.
 - `packages/adapters/vercel`: Vercel Blob adapter using its HTTP API.
 - `packages/adapters/cloudinary`: Cloudinary image upload adapter using the Upload API.
+- `packages/adapters/cloudflare`: Cloudflare R2 adapter using its S3-compatible API.
 
 ## Current API
 
@@ -26,6 +27,15 @@ export CLOUDINARY_CLOUD_NAME="your-cloud-name"
 export CLOUDINARY_API_KEY="your-api-key"
 export CLOUDINARY_API_SECRET="your-api-secret"
 go run ./cmd/uploader --provider cloudinary --key images/logo --file ./logo.png
+```
+
+Cloudflare R2 uses its S3-compatible API, with region `auto`. Create an R2 API token with object read/write access, then set the account ID and S3 credentials. The bucket is selected with `--bucket`. Set `CLOUDFLARE_R2_PUBLIC_BASE_URL` to a custom domain or public bucket URL if you want the returned URL to be directly accessible; without it, the adapter returns the R2 API endpoint URL.
+
+```sh
+export CLOUDFLARE_R2_ACCOUNT_ID="your-account-id"
+export CLOUDFLARE_R2_ACCESS_KEY_ID="your-access-key-id"
+export CLOUDFLARE_R2_SECRET_ACCESS_KEY="your-secret-access-key"
+go run ./cmd/uploader --provider cloudflare-r2 --bucket assets --key images/logo.png --file ./logo.png
 ```
 
 ```sh
@@ -90,7 +100,7 @@ go run ./cmd/uploader --provider filesystem --root-dir ./uploads --bucket local 
 
 ## Run the terminal app
 
-The Bubble Tea app supports uploads and object browsing for filesystem, Google Cloud Storage, Supabase, Upstash Blob, and Vercel Blob. Upload-only providers include UploadThing and Cloudinary. Browse first lists available buckets or stores, then lists object metadata in the selected bucket. Select an object to download it into the current directory, preview it with `p`, or delete it after confirmation. Image previews use Kitty graphics in Kitty, Ghostty, or WezTerm terminals; other terminals show a Unicode half-block preview. PNG, JPEG, and GIF previews are limited to 8 MiB and 20 megapixels. GCS setup asks for the project ID because bucket discovery needs it. Upstash uses a bucket scoped token and Vercel uses the store ID entered in setup, so those providers show that configured destination. Secret fields are masked and provider profiles are stored in the operating system credential store (Keychain on macOS). Press `ctrl+e` on the upload form to update a saved profile.
+The Bubble Tea app supports uploads and object browsing for filesystem, Google Cloud Storage, Supabase, Cloudflare R2, Upstash Blob, and Vercel Blob. Upload-only providers include UploadThing and Cloudinary. Browse first lists available buckets or stores, then lists object metadata in the selected bucket. Select an object to download it into the current directory, preview it with `p`, or delete it after confirmation. Image previews use Kitty graphics in Kitty, Ghostty, or WezTerm terminals; other terminals show a Unicode half-block preview. PNG, JPEG, and GIF previews are limited to 8 MiB and 20 megapixels. GCS setup asks for the project ID because bucket discovery needs it. Cloudflare R2 and Upstash show the configured bucket; Vercel shows the configured store. Secret fields are masked and provider profiles are stored in the operating system credential store (Keychain on macOS). Press `ctrl+e` on the upload form to update a saved profile.
 
 Google Cloud Storage requires an OAuth access token, which expires and may need updating. Upstash requires S3-compatible credentials for the selected bucket; its bucket token must first be exchanged for those credentials.
 

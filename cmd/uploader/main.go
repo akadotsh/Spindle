@@ -21,7 +21,7 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("uploader", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	provider := flags.String("provider", "supabase", "upload provider: supabase, filesystem, uploadthing, or cloudinary")
+	provider := flags.String("provider", "supabase", "upload provider: supabase, filesystem, uploadthing, cloudinary, or cloudflare-r2")
 	bucket := flags.String("bucket", "", "bucket name or filesystem subdirectory")
 	key := flags.String("key", "", "object key")
 	filePath := flags.String("file", "", "file to upload")
@@ -59,6 +59,13 @@ func run(args []string) error {
 	case sdk.ProviderCloudinary:
 		cloudinaryConfig := sdk.CloudinaryConfig{CloudName: os.Getenv("CLOUDINARY_CLOUD_NAME"), APIKey: os.Getenv("CLOUDINARY_API_KEY"), APISecret: os.Getenv("CLOUDINARY_API_SECRET")}
 		config = sdk.Config{Provider: sdk.ProviderCloudinary, Cloudinary: &cloudinaryConfig}
+	case sdk.ProviderCloudflareR2:
+		r2Config := sdk.CloudflareR2Config{
+			AccountID: os.Getenv("CLOUDFLARE_R2_ACCOUNT_ID"), Bucket: *bucket,
+			AccessKeyID: os.Getenv("CLOUDFLARE_R2_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY"),
+			PublicBaseURL: os.Getenv("CLOUDFLARE_R2_PUBLIC_BASE_URL"),
+		}
+		config = sdk.Config{Provider: sdk.ProviderCloudflareR2, CloudflareR2: &r2Config}
 	default:
 		return fmt.Errorf("unsupported CLI provider %q", *provider)
 	}

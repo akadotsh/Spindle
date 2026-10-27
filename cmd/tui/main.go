@@ -123,6 +123,7 @@ func initialModel() model {
 			sdk.ProviderUploadThing,
 			sdk.ProviderVercel,
 			sdk.ProviderCloudinary,
+			sdk.ProviderCloudflareR2,
 		},
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
 	}
@@ -556,6 +557,14 @@ func setupFieldsFor(provider sdk.Provider, values map[string]string) []field {
 			newField("S3 session token (optional)", "", get("S3 session token (optional)"), true, false),
 			newField("Public base URL (optional)", "", get("Public base URL (optional)"), false, false),
 		}
+	case sdk.ProviderCloudflareR2:
+		return []field{
+			newField("Cloudflare account ID", "account ID", get("Cloudflare account ID"), false, true),
+			newField("Bucket", "R2 bucket name", get("Bucket"), false, true),
+			newField("Access key ID", "R2 access key ID", get("Access key ID"), true, true),
+			newField("Secret access key", "R2 secret access key", get("Secret access key"), true, true),
+			newField("Public base URL (optional)", "Custom domain or public bucket URL", get("Public base URL (optional)"), false, false),
+		}
 	case sdk.ProviderVercel:
 		return []field{
 			newField("Blob token", "Vercel Blob token", get("Blob token"), true, true),
@@ -588,7 +597,7 @@ func uploadFieldsFor(provider sdk.Provider) []field {
 	if provider == sdk.ProviderCloudinary {
 		return []field{source, newField("Public ID", "images/photo (no extension)", "", false, true)}
 	}
-	if provider == sdk.ProviderUpstash || provider == sdk.ProviderVercel {
+	if provider == sdk.ProviderUpstash || provider == sdk.ProviderVercel || provider == sdk.ProviderCloudflareR2 {
 		return []field{source, key}
 	}
 	bucketDefault := "assets"
@@ -669,6 +678,12 @@ func clientFor(provider sdk.Provider, profile map[string]string) (*sdk.Client, e
 	case sdk.ProviderVercel:
 		vercelConfig := sdk.VercelConfig{Token: profile["Blob token"], StoreID: profile["Store ID"], Access: profile["Access (public/private)"]}
 		config = sdk.Config{Provider: provider, Vercel: &vercelConfig}
+	case sdk.ProviderCloudflareR2:
+		r2Config := sdk.CloudflareR2Config{
+			AccountID: profile["Cloudflare account ID"], Bucket: profile["Bucket"], AccessKeyID: profile["Access key ID"],
+			SecretAccessKey: profile["Secret access key"], PublicBaseURL: profile["Public base URL (optional)"],
+		}
+		config = sdk.Config{Provider: provider, CloudflareR2: &r2Config}
 	case sdk.ProviderUploadThing:
 		uploadThingConfig := sdk.UploadThingConfig{Token: profile["UploadThing token"]}
 		config = sdk.Config{Provider: provider, UploadThing: &uploadThingConfig}
@@ -1019,6 +1034,8 @@ func providerName(provider sdk.Provider) string {
 		return "UploadThing"
 	case sdk.ProviderCloudinary:
 		return "Cloudinary"
+	case sdk.ProviderCloudflareR2:
+		return "Cloudflare R2"
 	default:
 		return string(provider)
 	}

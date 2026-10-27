@@ -79,10 +79,10 @@ func (a *Adapter) Upload(ctx context.Context, request core.UploadRequest) (core.
 	}
 	credentials, err := a.credentials(ctx)
 	if err != nil {
-		return core.UploadResult{}, fmt.Errorf("get Upstash S3 credentials: %w", err)
+		return core.UploadResult{}, fmt.Errorf("get S3-compatible credentials: %w", err)
 	}
 	if credentials.AccessKey == "" || credentials.SecretKey == "" {
-		return core.UploadResult{}, fmt.Errorf("Upstash S3 credentials are incomplete")
+		return core.UploadResult{}, fmt.Errorf("S3-compatible credentials are incomplete")
 	}
 
 	u := *a.endpoint
@@ -127,7 +127,7 @@ func (a *Adapter) Upload(ctx context.Context, request core.UploadRequest) (core.
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return core.UploadResult{}, fmt.Errorf("Upstash S3 upload failed (%s): %s", response.Status, strings.TrimSpace(string(body)))
+		return core.UploadResult{}, fmt.Errorf("S3-compatible upload failed (%s): %s", response.Status, strings.TrimSpace(string(body)))
 	}
 	objectURL := u
 	if a.publicBase != nil {
@@ -156,10 +156,10 @@ var _ core.Adapter = (*Adapter)(nil)
 func (a *Adapter) signedRequest(ctx context.Context, method, key string, query url.Values) (*http.Response, error) {
 	credentials, err := a.credentials(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("get Upstash S3 credentials: %w", err)
+		return nil, fmt.Errorf("get S3-compatible credentials: %w", err)
 	}
 	if credentials.AccessKey == "" || credentials.SecretKey == "" {
-		return nil, fmt.Errorf("Upstash S3 credentials are incomplete")
+		return nil, fmt.Errorf("S3-compatible credentials are incomplete")
 	}
 	u := *a.endpoint
 	u.Path = strings.TrimRight(u.Path, "/") + "/" + a.bucket
@@ -200,7 +200,7 @@ func (a *Adapter) Get(ctx context.Context, r core.GetRequest) (core.GetResult, e
 	if resp.StatusCode/100 != 2 {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return core.GetResult{}, fmt.Errorf("Upstash S3 get failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+		return core.GetResult{}, fmt.Errorf("S3-compatible get failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 	return core.GetResult{Object: core.Object{Bucket: a.bucket, Key: r.Key, ContentType: resp.Header.Get("Content-Type"), ETag: resp.Header.Get("ETag")}, Body: resp.Body}, nil
 }
@@ -217,7 +217,7 @@ func (a *Adapter) List(ctx context.Context, r core.ListRequest) (core.ListResult
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return core.ListResult{}, fmt.Errorf("Upstash S3 list failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+		return core.ListResult{}, fmt.Errorf("S3-compatible list failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 	var page struct {
 		Truncated bool   `xml:"IsTruncated"`
@@ -250,7 +250,7 @@ func (a *Adapter) Delete(ctx context.Context, r core.DeleteRequest) error {
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("Upstash S3 delete failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
+		return fmt.Errorf("S3-compatible delete failed (%s): %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 	return nil
 }
