@@ -120,6 +120,7 @@ func initialModel() model {
 			sdk.ProviderGCS,
 			sdk.ProviderSupabase,
 			sdk.ProviderUpstash,
+			sdk.ProviderNeon,
 			sdk.ProviderUploadThing,
 			sdk.ProviderVercel,
 			sdk.ProviderCloudinary,
@@ -557,6 +558,13 @@ func setupFieldsFor(provider sdk.Provider, values map[string]string) []field {
 			newField("S3 session token (optional)", "", get("S3 session token (optional)"), true, false),
 			newField("Public base URL (optional)", "", get("Public base URL (optional)"), false, false),
 		}
+	case sdk.ProviderNeon:
+		return []field{
+			newField("S3 endpoint", "https://branch.storage...", get("S3 endpoint"), false, true),
+			newField("Region", "us-east-2", get("Region"), false, true),
+			newField("S3 access key ID", "AWS_ACCESS_KEY_ID", get("S3 access key ID"), true, true),
+			newField("S3 secret access key", "AWS_SECRET_ACCESS_KEY", get("S3 secret access key"), true, true),
+		}
 	case sdk.ProviderCloudflareR2:
 		return []field{
 			newField("Cloudflare account ID", "account ID", get("Cloudflare account ID"), false, true),
@@ -675,6 +683,9 @@ func clientFor(provider sdk.Provider, profile map[string]string) (*sdk.Client, e
 			CredentialsSource: func(context.Context) (sdk.UpstashCredentials, error) { return credentials, nil },
 		}
 		config = sdk.Config{Provider: provider, Upstash: &upstashConfig}
+	case sdk.ProviderNeon:
+		neonConfig := sdk.NeonConfig{Endpoint: profile["S3 endpoint"], Region: profile["Region"], AccessKeyID: profile["S3 access key ID"], SecretAccessKey: profile["S3 secret access key"]}
+		config = sdk.Config{Provider: provider, Neon: &neonConfig}
 	case sdk.ProviderVercel:
 		vercelConfig := sdk.VercelConfig{Token: profile["Blob token"], StoreID: profile["Store ID"], Access: profile["Access (public/private)"]}
 		config = sdk.Config{Provider: provider, Vercel: &vercelConfig}
@@ -1004,6 +1015,8 @@ func bucketScope(provider sdk.Provider) string {
 	switch provider {
 	case sdk.ProviderUpstash:
 		return "Showing the bucket configured for this scoped token."
+	case sdk.ProviderNeon:
+		return "Buckets available on the configured Neon branch."
 	case sdk.ProviderVercel:
 		return "Showing the configured Vercel Blob store."
 	default:
@@ -1028,6 +1041,8 @@ func providerName(provider sdk.Provider) string {
 		return "Supabase Storage"
 	case sdk.ProviderUpstash:
 		return "Upstash Blob"
+	case sdk.ProviderNeon:
+		return "Neon Object Storage"
 	case sdk.ProviderVercel:
 		return "Vercel Blob"
 	case sdk.ProviderUploadThing:

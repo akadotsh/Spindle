@@ -21,7 +21,7 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("uploader", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	provider := flags.String("provider", "supabase", "upload provider: supabase, filesystem, uploadthing, cloudinary, or cloudflare-r2")
+	provider := flags.String("provider", "supabase", "upload provider: supabase, filesystem, neon, uploadthing, cloudinary, or cloudflare-r2")
 	bucket := flags.String("bucket", "", "bucket name or filesystem subdirectory")
 	key := flags.String("key", "", "object key")
 	filePath := flags.String("file", "", "file to upload")
@@ -46,6 +46,9 @@ func run(args []string) error {
 			supabaseConfig.TokenSource = func(context.Context) (string, error) { return accessToken, nil }
 		}
 		config = sdk.Config{Provider: sdk.ProviderSupabase, Supabase: &supabaseConfig}
+	case sdk.ProviderNeon:
+		neonConfig := sdk.NeonConfig{Endpoint: os.Getenv("AWS_ENDPOINT_URL_S3"), Region: os.Getenv("AWS_REGION"), AccessKeyID: os.Getenv("AWS_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY")}
+		config = sdk.Config{Provider: sdk.ProviderNeon, Neon: &neonConfig}
 	case sdk.ProviderFilesystem:
 		filesystemConfig := sdk.FilesystemConfig{RootDir: *rootDir}
 		config = sdk.Config{Provider: sdk.ProviderFilesystem, Filesystem: &filesystemConfig}
