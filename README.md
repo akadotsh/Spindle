@@ -1,6 +1,8 @@
 # Spindle
 
-![Spindle logo](assets/spindle.png)
+<p align="center">
+  <img src="assets/spindle.png" alt="Spindle logo" width="420">
+</p>
 
 A provider-neutral Go SDK and terminal app for uploading files to local or cloud storage.
 
