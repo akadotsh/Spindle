@@ -140,6 +140,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = size.Height
 		return m, nil
 	}
+	if mouse, ok := msg.(tea.MouseClickMsg); ok && mouse.Button == tea.MouseLeft {
+		return m.updateMouse(mouse)
+	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		if key.String() == "ctrl+c" || key.String() == "q" && (m.screen == providerScreen || m.screen == resultScreen) {
 			return m, tea.Quit
@@ -337,6 +340,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.fields[m.focused].input, cmd = m.fields[m.focused].input.Update(msg)
 		return m, cmd
+	}
+	return m, nil
+}
+
+func (m model) updateMouse(mouse tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	// View adds one row and two columns of padding around the content.
+	if mouse.X < 2 {
+		return m, nil
+	}
+	row := func(firstY int) int { return mouse.Y - firstY }
+	switch m.screen {
+	case providerScreen:
+		index := row(5)
+		if index >= 0 && index < len(m.providers) {
+			m.selected = index
+			return m.updateProvider(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+		}
+	case actionScreen:
+		index := row(7)
+		count := 2
+		if m.provider == sdk.ProviderUploadThing || m.provider == sdk.ProviderCloudinary {
+			count = 1
+		}
+		if index >= 0 && index < count {
+			m.action = index
+			if index == 0 {
+				return m.enterUploadForm()
+			}
+			return m.enterBrowseForm()
+		}
+	case bucketScreen:
+		index := row(7)
+		if index >= 0 && index < len(m.buckets) {
+			m.bucketSel = index
+			m.bucket = m.buckets[index]
+			m.prefix = ""
+			m.status = ""
+			m.screen = listingScreen
+			return m, tea.Batch(m.spinner.Tick, listObjects(m.provider, m.profile, m.bucket, m.prefix, ""))
+		}
+	case browserScreen:
+		index := row(5)
+		if index >= 0 && index < len(m.objects) {
+			m.objectSel = index
+		}
 	}
 	return m, nil
 }
@@ -854,7 +902,7 @@ func (m model) View() tea.View {
 			content.WriteString(errorStyle.Render(m.err.Error()))
 			content.WriteString("\n\n")
 		}
-		content.WriteString(mutedStyle.Render("↑/↓ select • enter continue • q quit"))
+		content.WriteString(mutedStyle.Render("click or ↑/↓ select • enter continue • q quit"))
 	case setupScreen:
 		fmt.Fprintf(&content, "Set up %s\n\n", selectedStyle.Render(providerName(m.provider)))
 		content.WriteString(mutedStyle.Render("Credentials are saved in your system keychain.\n"))
@@ -885,7 +933,7 @@ func (m model) View() tea.View {
 			}
 			fmt.Fprintf(&content, "%s%s\n", mark, label)
 		}
-		content.WriteString("\n" + mutedStyle.Render("↑/↓ select • enter continue • esc providers"))
+		content.WriteString("\n" + mutedStyle.Render("click or ↑/↓ select • enter continue • esc providers"))
 	case uploadFormScreen:
 		fmt.Fprintf(&content, "Provider: %s\n\n", selectedStyle.Render(providerName(m.provider)))
 		for index, field := range m.fields {
@@ -926,7 +974,7 @@ func (m model) View() tea.View {
 		if m.status != "" {
 			content.WriteString(successStyle.Render(m.status) + "\n")
 		}
-		content.WriteString("\n" + mutedStyle.Render("↑/↓ select • enter open • x delete bucket • esc actions"))
+		content.WriteString("\n" + mutedStyle.Render("click or ↑/↓ select • enter open • x delete bucket • esc actions"))
 	case bucketConfirmScreen:
 		fmt.Fprintf(&content, "Delete bucket?\n\n%s\n\nThis only succeeds if the bucket is empty.\n\n", m.deleteBucket)
 		content.WriteString(mutedStyle.Render("y confirm • n/esc cancel"))
@@ -984,9 +1032,9 @@ func (m model) View() tea.View {
 			content.WriteString("\n" + errorStyle.Render(m.err.Error()))
 		}
 		content.WriteString("\n\n")
-		help := "↑/↓ select • p preview • d download • x delete • r refresh • esc actions"
+		help := "click or ↑/↓ select • p preview • d download • x delete • r refresh • esc actions"
 		if m.nextCursor != "" {
-			help = "↑/↓ select • n next page • p preview • d download • x delete • r refresh • esc actions"
+			help = "click or ↑/↓ select • n next page • p preview • d download • x delete • r refresh • esc actions"
 		}
 		content.WriteString(mutedStyle.Render(help))
 	case resultScreen:
@@ -1008,6 +1056,7 @@ func (m model) View() tea.View {
 	view := tea.NewView(lipgloss.NewStyle().Padding(1, 2).Render(content.String()))
 	view.AltScreen = true
 	view.WindowTitle = "File Uploader"
+	view.MouseMode = tea.MouseModeCellMotion
 	return view
 }
 
