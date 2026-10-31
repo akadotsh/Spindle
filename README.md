@@ -1,6 +1,8 @@
-# File Uploader SDK for Go
+# Spindle
 
-A provider-neutral Go SDK for uploading files to local or cloud storage.
+![Spindle logo](assets/spindle.png)
+
+A provider-neutral Go SDK and terminal app for uploading files to local or cloud storage.
 
 ## Layout
 

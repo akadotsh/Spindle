@@ -882,7 +882,7 @@ func deleteBucket(provider sdk.Provider, profile map[string]string, bucket strin
 func (m model) View() tea.View {
 	var content strings.Builder
 	content.WriteString(m.clearGraphics)
-	content.WriteString(titleStyle.Render("File Uploader"))
+	content.WriteString(titleStyle.Render("Spindle"))
 	content.WriteString("\n\n")
 
 	switch m.screen {
@@ -1055,7 +1055,7 @@ func (m model) View() tea.View {
 
 	view := tea.NewView(lipgloss.NewStyle().Padding(1, 2).Render(content.String()))
 	view.AltScreen = true
-	view.WindowTitle = "File Uploader"
+	view.WindowTitle = "Spindle"
 	view.MouseMode = tea.MouseModeCellMotion
 	return view
 }
