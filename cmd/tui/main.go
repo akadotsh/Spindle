@@ -10,6 +10,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/spinner"
@@ -143,6 +144,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if mouse, ok := msg.(tea.MouseClickMsg); ok && mouse.Button == tea.MouseLeft {
 		return m.updateMouse(mouse)
+	}
+	if paste, ok := msg.(tea.PasteMsg); ok && m.screen == uploadFormScreen && len(m.fields) > 0 && m.fields[m.focused].name == "Source file" {
+		path, err := normalizeDroppedPath(paste.Content)
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+		m.fields[m.focused].input.SetValue(path)
+		m.err = nil
+		return m, nil
 	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		if key.String() == "ctrl+c" || key.String() == "q" && (m.screen == providerScreen || m.screen == resultScreen) {
@@ -657,7 +668,7 @@ func setupFieldsFor(provider sdk.Provider, values map[string]string) []field {
 }
 
 func uploadFieldsFor(provider sdk.Provider) []field {
-	source := newField("Source file", "./path/to/file", "", false, true)
+	source := newField("Source file", "drop a file or enter its path", "", false, true)
 	key := newField("Object key", "images/photo.png", "", false, true)
 	if provider == sdk.ProviderUploadThing {
 		return []field{source, newField("File name", "photo.png", "", false, true)}
@@ -673,6 +684,25 @@ func uploadFieldsFor(provider sdk.Provider) []field {
 		bucketDefault = "local"
 	}
 	return []field{source, newField("Bucket", bucketDefault, "", false, true), key}
+}
+
+func normalizeDroppedPath(value string) (string, error) {
+	value = strings.Trim(value, "\r\n")
+	if strings.ContainsAny(value, "\r\n") {
+		return "", fmt.Errorf("drop one file at a time")
+	}
+	if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
+		if value[0] == '"' {
+			if unquoted, err := strconv.Unquote(value); err == nil {
+				value = unquoted
+			} else {
+				value = value[1 : len(value)-1]
+			}
+		} else {
+			value = value[1 : len(value)-1]
+		}
+	}
+	return value, nil
 }
 
 func defaultValue(value, fallback string) string {
@@ -931,6 +961,9 @@ func (m model) View() tea.View {
 				label = selectedStyle.Render(label)
 			}
 			fmt.Fprintf(&content, "%s\n%s\n\n", label, field.input.View())
+			if field.name == "Source file" {
+				content.WriteString(mutedStyle.Render("Drop a file onto the terminal or paste its path here.\n\n"))
+			}
 		}
 		if m.err != nil {
 			content.WriteString(errorStyle.Render(m.err.Error()))
