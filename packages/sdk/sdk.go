@@ -10,6 +10,7 @@ import (
 	"github.com/akashprasad/file-uploader/packages/adapters/filesystem"
 	"github.com/akashprasad/file-uploader/packages/adapters/gcs"
 	"github.com/akashprasad/file-uploader/packages/adapters/neon"
+	"github.com/akashprasad/file-uploader/packages/adapters/s3"
 	"github.com/akashprasad/file-uploader/packages/adapters/supabase"
 	"github.com/akashprasad/file-uploader/packages/adapters/uploadthing"
 	"github.com/akashprasad/file-uploader/packages/adapters/upstash"
@@ -44,6 +45,7 @@ const (
 	ProviderVercel       Provider = "vercel"
 	ProviderCloudinary   Provider = "cloudinary"
 	ProviderCloudflareR2 Provider = "cloudflare-r2"
+	ProviderS3           Provider = "s3"
 )
 
 type GCSConfig = gcs.Config
@@ -52,6 +54,7 @@ type SupabaseConfig = supabase.Config
 type UpstashConfig = upstash.Config
 type UpstashCredentials = upstash.Credentials
 type NeonConfig = neon.Config
+type S3Config = s3.Config
 type UploadThingConfig = uploadthing.Config
 type VercelConfig = vercel.Config
 type CloudinaryConfig = cloudinary.Config
@@ -65,6 +68,7 @@ type Config struct {
 	Supabase     *SupabaseConfig
 	Upstash      *UpstashConfig
 	Neon         *NeonConfig
+	S3           *S3Config
 	UploadThing  *UploadThingConfig
 	Vercel       *VercelConfig
 	Cloudinary   *CloudinaryConfig
@@ -80,7 +84,7 @@ type Client struct {
 func New(config Config) (*Client, error) {
 	switch config.Provider {
 	case ProviderFilesystem:
-		if config.Filesystem == nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
+		if config.Filesystem == nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.S3 != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
 			return nil, fmt.Errorf("provide only filesystem configuration when provider is %q", config.Provider)
 		}
 		adapter, err := filesystem.New(*config.Filesystem)
@@ -89,7 +93,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderGCS:
-		if config.GCS == nil || config.Filesystem != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
+		if config.GCS == nil || config.Filesystem != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.S3 != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
 			return nil, fmt.Errorf("provide only GCS configuration when provider is %q", config.Provider)
 		}
 		adapter, err := gcs.New(*config.GCS)
@@ -97,8 +101,17 @@ func New(config Config) (*Client, error) {
 			return nil, err
 		}
 		return NewWithAdapter(adapter), nil
+	case ProviderS3:
+		if config.S3 == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
+			return nil, fmt.Errorf("provide only Amazon S3 configuration when provider is %q", config.Provider)
+		}
+		adapter, err := s3.New(*config.S3)
+		if err != nil {
+			return nil, err
+		}
+		return NewWithAdapter(adapter), nil
 	case ProviderUpstash:
-		if config.Upstash == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Neon != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
+		if config.Upstash == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Neon != nil || config.S3 != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
 			return nil, fmt.Errorf("provide only Upstash configuration when provider is %q", config.Provider)
 		}
 		adapter, err := upstash.New(*config.Upstash)
@@ -107,7 +120,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderNeon:
-		if config.Neon == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
+		if config.Neon == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.S3 != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
 			return nil, fmt.Errorf("provide only Neon configuration when provider is %q", config.Provider)
 		}
 		adapter, err := neon.New(*config.Neon)
@@ -116,7 +129,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderVercel:
-		if config.Vercel == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.UploadThing != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
+		if config.Vercel == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.S3 != nil || config.UploadThing != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
 			return nil, fmt.Errorf("provide only Vercel configuration when provider is %q", config.Provider)
 		}
 		adapter, err := vercel.New(*config.Vercel)
@@ -125,7 +138,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderUploadThing:
-		if config.UploadThing == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
+		if config.UploadThing == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.S3 != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
 			return nil, fmt.Errorf("provide only UploadThing configuration when provider is %q", config.Provider)
 		}
 		adapter, err := uploadthing.New(*config.UploadThing)
@@ -134,7 +147,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderSupabase:
-		if config.Supabase == nil || config.Filesystem != nil || config.GCS != nil || config.Upstash != nil || config.Neon != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
+		if config.Supabase == nil || config.Filesystem != nil || config.GCS != nil || config.Upstash != nil || config.Neon != nil || config.S3 != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil || config.CloudflareR2 != nil {
 			return nil, fmt.Errorf("provide only Supabase configuration when provider is %q", config.Provider)
 		}
 		adapter, err := supabase.New(*config.Supabase)
@@ -143,7 +156,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderCloudinary:
-		if config.Cloudinary == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.UploadThing != nil || config.Vercel != nil || config.CloudflareR2 != nil {
+		if config.Cloudinary == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.S3 != nil || config.UploadThing != nil || config.Vercel != nil || config.CloudflareR2 != nil {
 			return nil, fmt.Errorf("provide only Cloudinary configuration when provider is %q", config.Provider)
 		}
 		adapter, err := cloudinary.New(*config.Cloudinary)
@@ -152,7 +165,7 @@ func New(config Config) (*Client, error) {
 		}
 		return NewWithAdapter(adapter), nil
 	case ProviderCloudflareR2:
-		if config.CloudflareR2 == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil {
+		if config.CloudflareR2 == nil || config.Filesystem != nil || config.GCS != nil || config.Supabase != nil || config.Upstash != nil || config.Neon != nil || config.S3 != nil || config.UploadThing != nil || config.Vercel != nil || config.Cloudinary != nil {
 			return nil, fmt.Errorf("provide only Cloudflare R2 configuration when provider is %q", config.Provider)
 		}
 		adapter, err := cloudflare.New(*config.CloudflareR2)

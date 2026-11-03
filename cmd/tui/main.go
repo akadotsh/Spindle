@@ -121,6 +121,7 @@ func initialModel() model {
 			sdk.ProviderSupabase,
 			sdk.ProviderUpstash,
 			sdk.ProviderNeon,
+			sdk.ProviderS3,
 			sdk.ProviderUploadThing,
 			sdk.ProviderVercel,
 			sdk.ProviderCloudinary,
@@ -613,6 +614,17 @@ func setupFieldsFor(provider sdk.Provider, values map[string]string) []field {
 			newField("S3 access key ID", "AWS_ACCESS_KEY_ID", get("S3 access key ID"), true, true),
 			newField("S3 secret access key", "AWS_SECRET_ACCESS_KEY", get("S3 secret access key"), true, true),
 		}
+	case sdk.ProviderS3:
+		region := os.Getenv("AWS_REGION")
+		if region == "" {
+			region = os.Getenv("AWS_DEFAULT_REGION")
+		}
+		return []field{
+			newField("AWS region", "us-east-1", defaultValue(get("AWS region"), region), false, true),
+			newField("Access key ID", "AWS_ACCESS_KEY_ID", get("Access key ID"), true, true),
+			newField("Secret access key", "AWS_SECRET_ACCESS_KEY", get("Secret access key"), true, true),
+			newField("Session token (optional)", "", get("Session token (optional)"), true, false),
+		}
 	case sdk.ProviderCloudflareR2:
 		return []field{
 			newField("Cloudflare account ID", "account ID", get("Cloudflare account ID"), false, true),
@@ -734,6 +746,12 @@ func clientFor(provider sdk.Provider, profile map[string]string) (*sdk.Client, e
 	case sdk.ProviderNeon:
 		neonConfig := sdk.NeonConfig{Endpoint: profile["S3 endpoint"], Region: profile["Region"], AccessKeyID: profile["S3 access key ID"], SecretAccessKey: profile["S3 secret access key"]}
 		config = sdk.Config{Provider: provider, Neon: &neonConfig}
+	case sdk.ProviderS3:
+		s3Config := sdk.S3Config{
+			Region: profile["AWS region"], AccessKeyID: profile["Access key ID"], SecretAccessKey: profile["Secret access key"],
+			SessionToken: profile["Session token (optional)"],
+		}
+		config = sdk.Config{Provider: provider, S3: &s3Config}
 	case sdk.ProviderVercel:
 		vercelConfig := sdk.VercelConfig{Token: profile["Blob token"], StoreID: profile["Store ID"], Access: profile["Access (public/private)"]}
 		config = sdk.Config{Provider: provider, Vercel: &vercelConfig}
@@ -1092,6 +1110,8 @@ func providerName(provider sdk.Provider) string {
 		return "Upstash Blob"
 	case sdk.ProviderNeon:
 		return "Neon Object Storage"
+	case sdk.ProviderS3:
+		return "Amazon S3"
 	case sdk.ProviderVercel:
 		return "Vercel Blob"
 	case sdk.ProviderUploadThing:

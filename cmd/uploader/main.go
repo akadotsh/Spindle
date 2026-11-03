@@ -21,8 +21,13 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("uploader", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	provider := flags.String("provider", "supabase", "upload provider: supabase, filesystem, neon, uploadthing, cloudinary, or cloudflare-r2")
+	regionDefault := os.Getenv("AWS_REGION")
+	if regionDefault == "" {
+		regionDefault = os.Getenv("AWS_DEFAULT_REGION")
+	}
+	provider := flags.String("provider", "supabase", "upload provider: supabase, filesystem, Amazon S3, neon, uploadthing, cloudinary, or cloudflare-r2")
 	bucket := flags.String("bucket", "", "bucket name or filesystem subdirectory")
+	region := flags.String("region", regionDefault, "AWS region for Amazon S3")
 	key := flags.String("key", "", "object key")
 	filePath := flags.String("file", "", "file to upload")
 	rootDir := flags.String("root-dir", "./uploads", "filesystem provider root directory")
@@ -49,6 +54,12 @@ func run(args []string) error {
 	case sdk.ProviderNeon:
 		neonConfig := sdk.NeonConfig{Endpoint: os.Getenv("AWS_ENDPOINT_URL_S3"), Region: os.Getenv("AWS_REGION"), AccessKeyID: os.Getenv("AWS_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY")}
 		config = sdk.Config{Provider: sdk.ProviderNeon, Neon: &neonConfig}
+	case sdk.ProviderS3:
+		s3Config := sdk.S3Config{
+			Region: *region, AccessKeyID: os.Getenv("AWS_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+			SessionToken: os.Getenv("AWS_SESSION_TOKEN"), PublicBaseURL: os.Getenv("AWS_S3_PUBLIC_BASE_URL"),
+		}
+		config = sdk.Config{Provider: sdk.ProviderS3, S3: &s3Config}
 	case sdk.ProviderFilesystem:
 		filesystemConfig := sdk.FilesystemConfig{RootDir: *rootDir}
 		config = sdk.Config{Provider: sdk.ProviderFilesystem, Filesystem: &filesystemConfig}
