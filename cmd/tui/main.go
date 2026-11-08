@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"image"
 	"io"
-	"mime"
 	"os"
 	"path/filepath"
 	"strconv"
