@@ -72,8 +72,9 @@ type objectFinishedMsg struct {
 	err     error
 }
 type previewFinishedMsg struct {
-	content, clear string
-	err            error
+	content string
+	clear   string
+	err     error
 }
 
 type model struct {
@@ -102,7 +103,10 @@ type model struct {
 	width         int
 	height        int
 	preview       string
+	previewErr    error
 	previewClear  string
+	previewBack   screen
+	previewName   string
 	clearGraphics string
 }
 
@@ -313,7 +317,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = previewScreen
 			m.preview = msg.content
 			m.previewClear = msg.clear
-			m.err = msg.err
+			m.previewErr = msg.err
 			return m, nil
 		default:
 			var cmd tea.Cmd
@@ -478,6 +482,9 @@ func (m model) updateUploadForm(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.screen = setupScreen
 		return m, m.fields[0].input.Focus()
 	}
+	if key.String() == "ctrl+p" {
+		return m.enterSourcePreview(uploadFormScreen)
+	}
 	switch key.String() {
 	case "esc":
 		m.screen = providerScreen
@@ -502,6 +509,20 @@ func (m model) updateUploadForm(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.fields[m.focused].input, cmd = m.fields[m.focused].input.Update(key)
 	return m, cmd
+}
+
+func (m model) enterSourcePreview(back screen) (tea.Model, tea.Cmd) {
+	path, err := normalizeDroppedPath(m.fields[0].input.Value())
+	m.previewBack = back
+	m.previewName = filepath.Base(path)
+	m.previewErr = err
+	if err != nil {
+		m.screen = previewScreen
+		return m, nil
+	}
+	cols, rows := m.previewSize()
+	m.screen = previewLoadingScreen
+	return m, tea.Batch(m.spinner.Tick, previewFile(path, cols, rows))
 }
 
 func (m model) enterUploadForm() (tea.Model, tea.Cmd) {
@@ -558,25 +579,18 @@ func (m model) updateBrowser(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "p":
 		if len(m.objects) > 0 {
-			cols := m.width - 8
-			rows := m.height - 9
-			if cols > 80 {
-				cols = 80
-			}
-			if rows > 30 {
-				rows = 30
-			}
-			if cols < 10 {
-				cols = 10
-			}
-			if rows < 4 {
-				rows = 4
-			}
+			cols, rows := m.previewSize()
+			m.previewBack = browserScreen
+			m.previewName = m.objects[m.objectSel].Key
 			m.screen = previewLoadingScreen
 			return m, tea.Batch(m.spinner.Tick, previewObject(m.provider, m.profile, m.objects[m.objectSel], cols, rows))
 		}
 	}
 	return m, nil
+}
+
+func (m model) previewSize() (int, int) {
+	return max(10, min(80, m.width-8)), max(4, min(30, m.height-9))
 }
 
 func (m model) moveFocus(change int) (tea.Model, tea.Cmd) {
@@ -592,9 +606,34 @@ func (m model) values() (map[string]string, error) {
 		if field.required && value == "" {
 			return nil, fmt.Errorf("%s is required", field.name)
 		}
+		if field.name == "Source file" {
+			var err error
+			value, err = sourcePath(value)
+			if err != nil {
+				return nil, err
+			}
+		}
 		values[field.name] = value
 	}
 	return values, nil
+}
+
+func sourcePath(value string) (string, error) {
+	value, err := normalizeDroppedPath(strings.TrimSpace(value))
+	if err != nil {
+		return "", err
+	}
+	if value == "" {
+		return "", fmt.Errorf("Source file is required")
+	}
+	info, err := os.Stat(value)
+	if err != nil {
+		return "", fmt.Errorf("source file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("source file must be a regular file")
+	}
+	return value, nil
 }
 
 func setupFieldsFor(provider sdk.Provider, values map[string]string) []field {
@@ -700,6 +739,11 @@ func normalizeDroppedPath(value string) (string, error) {
 			}
 		} else {
 			value = value[1 : len(value)-1]
+		}
+	}
+	if strings.Contains(value, `\ `) {
+		if _, err := os.Stat(value); errors.Is(err, os.ErrNotExist) {
+			value = strings.ReplaceAll(value, `\ `, " ")
 		}
 	}
 	return value, nil
@@ -869,36 +913,7 @@ func previewObject(provider sdk.Provider, profile map[string]string, object sdk.
 			return previewFinishedMsg{err: err}
 		}
 		defer result.Body.Close()
-		contentType := result.Object.ContentType
-		if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
-			contentType = mime.TypeByExtension(strings.ToLower(filepath.Ext(object.Key)))
-		}
-		if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
-			return previewFinishedMsg{err: fmt.Errorf("%s is not an image", object.Key)}
-		}
-		data, err := io.ReadAll(io.LimitReader(result.Body, maxPreviewBytes+1))
-		if err != nil {
-			return previewFinishedMsg{err: err}
-		}
-		if len(data) > maxPreviewBytes {
-			return previewFinishedMsg{err: fmt.Errorf("image exceeds the %d MiB preview limit", maxPreviewBytes/(1024*1024))}
-		}
-		config, _, err := image.DecodeConfig(bytes.NewReader(data))
-		if err != nil {
-			return previewFinishedMsg{err: fmt.Errorf("read image header: %w", err)}
-		}
-		if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 20_000_000 {
-			return previewFinishedMsg{err: fmt.Errorf("image dimensions exceed the preview limit")}
-		}
-		img, _, err := image.Decode(bytes.NewReader(data))
-		if err != nil {
-			return previewFinishedMsg{err: fmt.Errorf("decode image: %w", err)}
-		}
-		content, clear, err := renderImagePreview(img, cols, rows)
-		if err != nil {
-			return previewFinishedMsg{err: err}
-		}
-		return previewFinishedMsg{content: content, clear: clear}
+		return previewImage(result.Body, cols, rows)
 	}
 }
 
@@ -1045,13 +1060,9 @@ func (m model) View() tea.View {
 	case previewLoadingScreen:
 		fmt.Fprintf(&content, "%s Loading image preview…\n", m.spinner.View())
 	case previewScreen:
-		key := ""
-		if len(m.objects) > m.objectSel {
-			key = m.objects[m.objectSel].Key
-		}
-		fmt.Fprintf(&content, "Image preview: %s\n\n", key)
-		if m.err != nil {
-			content.WriteString(errorStyle.Render(m.err.Error()))
+		fmt.Fprintf(&content, "Image preview: %s\n\n", m.previewName)
+		if m.previewErr != nil {
+			content.WriteString(errorStyle.Render(m.previewErr.Error()))
 		} else {
 			content.WriteString(m.preview)
 		}
@@ -1100,7 +1111,7 @@ func (m model) View() tea.View {
 			content.WriteString("\n\n")
 			content.WriteString(m.resultURL)
 			content.WriteString("\n\n")
-			content.WriteString(mutedStyle.Render("enter upload another • q quit"))
+			content.WriteString(mutedStyle.Render("p preview image • enter upload another • q quit"))
 		}
 	}
 

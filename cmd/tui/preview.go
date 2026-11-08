@@ -11,12 +11,50 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"math"
+	"os"
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // shortcut: previews decode PNG, JPEG, and GIF files up to 8 MiB and 20 MP; add decoders or raise limits when other images are needed.
 const maxPreviewBytes = 8 << 20
+
+func previewFile(path string, cols, rows int) tea.Cmd {
+	return func() tea.Msg {
+		file, err := os.Open(path)
+		if err != nil {
+			return previewFinishedMsg{err: fmt.Errorf("open source file: %w", err)}
+		}
+		defer file.Close()
+		return previewImage(file, cols, rows)
+	}
+}
+
+func previewImage(reader io.Reader, cols, rows int) previewFinishedMsg {
+	data, err := io.ReadAll(io.LimitReader(reader, maxPreviewBytes+1))
+	if err != nil {
+		return previewFinishedMsg{err: err}
+	}
+	if len(data) > maxPreviewBytes {
+		return previewFinishedMsg{err: fmt.Errorf("image exceeds the %d MiB preview limit", maxPreviewBytes/(1024*1024))}
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return previewFinishedMsg{err: fmt.Errorf("not a supported image: %w", err)}
+	}
+	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 20_000_000 {
+		return previewFinishedMsg{err: fmt.Errorf("image dimensions exceed the preview limit")}
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return previewFinishedMsg{err: fmt.Errorf("decode image: %w", err)}
+	}
+	content, clear, err := renderImagePreview(img, cols, rows)
+	return previewFinishedMsg{content: content, clear: clear, err: err}
+}
 
 func renderImagePreview(src image.Image, cols, rows int) (string, string, error) {
 	bounds := src.Bounds()
@@ -25,11 +63,66 @@ func renderImagePreview(src image.Image, cols, rows int) (string, string, error)
 	}
 	cols = max(1, cols)
 	rows = max(1, rows)
-	pixels, width, height := fitRGBA(src, cols*16, rows*32)
-	imageCols := max(1, int(math.Round(float64(width)/16)))
-	imageRows := max(1, int(math.Round(float64(height)/32)))
-	kitty, clear, err := kittyImage(pixels, width, height, imageCols, imageRows)
-	return kitty, clear, err
+	if os.Getenv("TERM_PROGRAM") == "rex" || strings.Contains(os.Getenv("TERM"), "kitty") {
+		pixels, width, height := fitRGBA(src, cols*16, rows*32)
+		imageCols := max(1, int(math.Round(float64(width)/16)))
+		imageRows := max(1, int(math.Round(float64(height)/32)))
+		return kittyImage(pixels, width, height, imageCols, imageRows)
+	}
+	pixels, width, height := fitRGBA(src, cols, rows*2)
+	var out bytes.Buffer
+	// shortcut: transparent pixels use black; blend against the terminal background if light themes need accurate transparency.
+	for y := 0; y < height; y += 2 {
+		for x := 0; x < width; x++ {
+			top := (y*width + x) * 4
+			bottom := (min(y+1, height-1)*width + x) * 4
+			fmt.Fprintf(&out, "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀",
+				int(pixels[top])*int(pixels[top+3])/255, int(pixels[top+1])*int(pixels[top+3])/255, int(pixels[top+2])*int(pixels[top+3])/255,
+				int(pixels[bottom])*int(pixels[bottom+3])/255, int(pixels[bottom+1])*int(pixels[bottom+3])/255, int(pixels[bottom+2])*int(pixels[bottom+3])/255)
+		}
+		out.WriteString("\x1b[0m\n")
+	}
+	return out.String(), "", nil
+}
+
+func kittyImage(pixels []byte, width, height, cols, rows int) (string, string, error) {
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	if _, err := zw.Write(pixels); err != nil {
+		return "", "", err
+	}
+	if err := zw.Close(); err != nil {
+		return "", "", err
+	}
+	encoded := base64.StdEncoding.EncodeToString(compressed.Bytes())
+	var randomID [4]byte
+	if _, err := rand.Read(randomID[:]); err != nil {
+		return "", "", err
+	}
+	id := uint32(randomID[0])<<24 | uint32(randomID[1])<<16 | uint32(randomID[2])<<8 | uint32(randomID[3])
+	id = id&0x7fffffff | 1
+	var out bytes.Buffer
+	for offset, first := 0, true; offset < len(encoded); first = false {
+		end := min(offset+4096, len(encoded))
+		more := 0
+		if end < len(encoded) {
+			more = 1
+		}
+		if first {
+			fmt.Fprintf(&out, "\x1b_Ga=T,f=32,o=z,t=d,s=%d,v=%d,c=%d,r=%d,C=1,i=%d,q=2,m=%d;%s\x1b\\", width, height, cols, rows, id, more, encoded[offset:end])
+		} else {
+			fmt.Fprintf(&out, "\x1b_Gm=%d,q=2;%s\x1b\\", more, encoded[offset:end])
+		}
+		offset = end
+	}
+	for row := 0; row < rows; row++ {
+		if row > 0 {
+			out.WriteByte('\n')
+		}
+		out.WriteString(strings.Repeat(" ", cols))
+	}
+	clear := fmt.Sprintf("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", id)
+	return out.String(), clear, nil
 }
 
 func fitRGBA(src image.Image, maxWidth, maxHeight int) ([]byte, int, int) {
@@ -62,47 +155,4 @@ func sampleBilinear(src image.Image, x, y float64) color.NRGBA {
 		return color.NRGBAModel.Convert(src.At(max(b.Min.X, min(x, b.Max.X-1)), max(b.Min.Y, min(y, b.Max.Y-1)))).(color.NRGBA)
 	}
 	return blend(blend(point(x0, y0), point(x0+1, y0), dx), blend(point(x0, y0+1), point(x0+1, y0+1), dx), dy)
-}
-
-func kittyImage(pixels []byte, width, height, cols, rows int) (string, string, error) {
-	var compressed bytes.Buffer
-	zw := zlib.NewWriter(&compressed)
-	if _, err := zw.Write(pixels); err != nil {
-		return "", "", err
-	}
-	if err := zw.Close(); err != nil {
-		return "", "", err
-	}
-	encoded := base64.StdEncoding.EncodeToString(compressed.Bytes())
-	var randomID [4]byte
-	if _, err := rand.Read(randomID[:]); err != nil {
-		return "", "", err
-	}
-	id := uint32(randomID[0])<<24 | uint32(randomID[1])<<16 | uint32(randomID[2])<<8 | uint32(randomID[3])
-	id &= 0x7fffffff
-	if id == 0 {
-		id = 1
-	}
-	var out strings.Builder
-	for offset, first := 0, true; offset < len(encoded); first = false {
-		end := min(offset+4096, len(encoded))
-		more := 0
-		if end < len(encoded) {
-			more = 1
-		}
-		if first {
-			fmt.Fprintf(&out, "\x1b_Ga=T,f=32,o=z,t=d,s=%d,v=%d,c=%d,r=%d,C=1,i=%d,q=2,m=%d;%s\x1b\\", width, height, cols, rows, id, more, encoded[offset:end])
-		} else {
-			fmt.Fprintf(&out, "\x1b_Gm=%d,q=2;%s\x1b\\", more, encoded[offset:end])
-		}
-		offset = end
-	}
-	for row := 0; row < rows; row++ {
-		if row > 0 {
-			out.WriteByte('\n')
-		}
-		out.WriteString(strings.Repeat(" ", cols))
-	}
-	clear := fmt.Sprintf("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", id)
-	return out.String(), clear, nil
 }
