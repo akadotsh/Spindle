@@ -26,6 +26,7 @@ const (
 	setupScreen
 	actionScreen
 	uploadFormScreen
+	shotScreen
 	uploadingScreen
 	resultScreen
 	bucketLoadingScreen
@@ -105,6 +106,7 @@ type model struct {
 	previewBack   screen
 	previewName   string
 	clearGraphics string
+	shot          shotState
 }
 
 var (
@@ -144,16 +146,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if mouse, ok := msg.(tea.MouseClickMsg); ok && mouse.Button == tea.MouseLeft {
+		if m.screen == shotScreen {
+			return m.shotClick(mouse)
+		}
 		return m.updateMouse(mouse)
 	}
-	if paste, ok := msg.(tea.PasteMsg); ok && m.screen == uploadFormScreen && len(m.fields) > 0 && m.fields[m.focused].name == "Source file" {
+	if m.screen == shotScreen {
+		switch msg := msg.(type) {
+		case tea.MouseMotionMsg:
+			return m.shotMotion(msg)
+		case tea.MouseReleaseMsg:
+			return m.shotRelease(msg)
+		case shotTickMsg:
+			return m.shotTick(msg)
+		}
+	}
+	if paste, ok := msg.(tea.PasteMsg); ok && (m.screen == shotScreen || m.screen == uploadFormScreen && len(m.fields) > 0 && m.fields[m.focused].name == "Source file") {
 		path, err := normalizeDroppedPath(paste.Content)
 		if err != nil {
-			m.err = err
+			if m.screen == shotScreen {
+				m.shot.status = err.Error()
+			} else {
+				m.err = err
+			}
 			return m, nil
 		}
-		m.fields[m.focused].input.SetValue(path)
-		m.err = nil
+		if m.screen == shotScreen {
+			m = m.setBasketballSource(path)
+		} else {
+			m.fields[m.focused].input.SetValue(path)
+			m.err = nil
+		}
 		return m, nil
 	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
@@ -168,13 +191,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSetup(key)
 		case uploadFormScreen:
 			return m.updateUploadForm(key)
+		case shotScreen:
+			return m.shotKey(key)
 		case actionScreen:
 			switch key.String() {
-			case "up", "k", "down", "j":
-				if m.provider != sdk.ProviderUploadThing && m.provider != sdk.ProviderCloudinary {
-					m.action = 1 - m.action
-				}
+			case "up", "k":
+				m.action = max(0, m.action-1)
+			case "down", "j":
+				m.action = min(len(actionsFor(m.provider))-1, m.action+1)
 			case "enter":
+				if m.action == 1 {
+					return m.enterBasketballScreen()
+				}
 				if m.action == 0 {
 					return m.enterUploadForm()
 				}
@@ -372,12 +400,11 @@ func (m model) updateMouse(mouse tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		}
 	case actionScreen:
 		index := row(7)
-		count := 2
-		if m.provider == sdk.ProviderUploadThing || m.provider == sdk.ProviderCloudinary {
-			count = 1
-		}
-		if index >= 0 && index < count {
+		if index >= 0 && index < len(actionsFor(m.provider)) {
 			m.action = index
+			if index == 1 {
+				return m.enterBasketballScreen()
+			}
 			if index == 0 {
 				return m.enterUploadForm()
 			}
@@ -484,8 +511,7 @@ func (m model) updateUploadForm(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key.String() {
 	case "esc":
-		m.screen = providerScreen
-		return m, nil
+		return m.enterActionScreen()
 	case "tab", "down":
 		return m.moveFocus(1)
 	case "shift+tab", "up":
@@ -500,6 +526,13 @@ func (m model) updateUploadForm(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
+		if m.action == 1 {
+			shotID := m.shot.id
+			m.shot = newShotState()
+			m.shot.id = shotID + 1
+			m.screen = shotScreen
+			return m, nil
+		}
 		m.screen = uploadingScreen
 		return m, tea.Batch(m.spinner.Tick, upload(m.provider, m.profile, values))
 	}
@@ -529,11 +562,55 @@ func (m model) enterUploadForm() (tea.Model, tea.Cmd) {
 	return m, m.fields[0].input.Focus()
 }
 
+func (m model) enterBasketballScreen() (tea.Model, tea.Cmd) {
+	m.fields = uploadFieldsFor(m.provider)
+	m.focused = 0
+	for i := range m.fields {
+		switch m.fields[i].name {
+		case "Bucket":
+			m.fields[i].input.SetValue(defaultValue(m.profile["Bucket"], defaultValue(m.fields[i].input.Placeholder, "assets")))
+		}
+	}
+	m.shot = newShotState()
+	m.screen = shotScreen
+	m.err = nil
+	return m, nil
+}
+
+func (m model) setBasketballSource(path string) model {
+	path, err := sourcePath(path)
+	if err != nil {
+		m.shot.status = err.Error()
+		return m
+	}
+	name := filepath.Base(path)
+	for i := range m.fields {
+		switch m.fields[i].name {
+		case "Source file":
+			m.fields[i].input.SetValue(path)
+		case "Object key", "File name":
+			m.fields[i].input.SetValue(name)
+		case "Public ID":
+			m.fields[i].input.SetValue(strings.TrimSuffix(name, filepath.Ext(name)))
+		}
+	}
+	m.shot.status = "Photo ready — take the shot."
+	return m
+}
+
 func (m model) enterActionScreen() (tea.Model, tea.Cmd) {
 	m.screen = actionScreen
 	m.action = 0
 	m.err = nil
 	return m, nil
+}
+
+func actionsFor(provider sdk.Provider) []string {
+	actions := []string{"Upload a file", "Upload files by playing a game", "Browse objects"}
+	if provider == sdk.ProviderUploadThing || provider == sdk.ProviderCloudinary {
+		return actions[:2]
+	}
+	return actions
 }
 
 func (m model) enterBrowseForm() (tea.Model, tea.Cmd) {
@@ -987,11 +1064,7 @@ func (m model) View() tea.View {
 		content.WriteString(mutedStyle.Render("tab next • shift+tab previous • enter save and continue • esc back"))
 	case actionScreen:
 		fmt.Fprintf(&content, "Provider: %s\n\nChoose an action\n\n", selectedStyle.Render(providerName(m.provider)))
-		actions := []string{"Upload a file", "Browse objects"}
-		if m.provider == sdk.ProviderUploadThing || m.provider == sdk.ProviderCloudinary {
-			actions = actions[:1]
-		}
-		for i, label := range actions {
+		for i, label := range actionsFor(m.provider) {
 			mark := "  "
 			if i == m.action {
 				mark = "› "
@@ -1002,22 +1075,31 @@ func (m model) View() tea.View {
 		content.WriteString("\n" + mutedStyle.Render("click or ↑/↓ select • enter continue • esc providers"))
 	case uploadFormScreen:
 		fmt.Fprintf(&content, "Provider: %s\n\n", selectedStyle.Render(providerName(m.provider)))
+		if m.action == 1 {
+			content.WriteString("Game upload\n\n")
+		}
 		for index, field := range m.fields {
 			label := field.name
 			if index == m.focused {
 				label = selectedStyle.Render(label)
 			}
 			fmt.Fprintf(&content, "%s\n%s\n\n", label, field.input.View())
+			if field.name == "Source file" && m.action == 1 {
+				content.WriteString(mutedStyle.Render("Drop or paste a photo first to start the game.\n\n"))
+			}
 		}
 		if m.err != nil {
 			content.WriteString(errorStyle.Render(m.err.Error()))
 			content.WriteString("\n\n")
 		}
-		if m.provider == sdk.ProviderFilesystem {
-			content.WriteString(mutedStyle.Render("tab next • shift+tab previous • enter upload • esc providers"))
-		} else {
-			content.WriteString(mutedStyle.Render("tab next • shift+tab previous • enter upload • ctrl+e credentials • esc providers"))
+		help := "tab next • shift+tab previous • enter upload • ctrl+p preview • esc actions"
+		if m.action == 1 {
+			help = "tab next • shift+tab previous • enter take shot • ctrl+p preview • esc actions"
 		}
+		if m.provider != sdk.ProviderFilesystem {
+			help += " • ctrl+e credentials"
+		}
+		content.WriteString(mutedStyle.Render(help))
 	case bucketLoadingScreen:
 		fmt.Fprintf(&content, "%s Fetching buckets for %s…\n", m.spinner.View(), providerName(m.provider))
 	case bucketScreen:
@@ -1048,6 +1130,8 @@ func (m model) View() tea.View {
 		fmt.Fprintf(&content, "%s Deleting bucket…\n", m.spinner.View())
 	case uploadingScreen:
 		fmt.Fprintf(&content, "%s Uploading to %s…\n", m.spinner.View(), m.provider)
+	case shotScreen:
+		content.WriteString(m.shotView())
 	case listingScreen:
 		fmt.Fprintf(&content, "%s Loading objects from %s…\n", m.spinner.View(), m.provider)
 	case downloadingScreen:
