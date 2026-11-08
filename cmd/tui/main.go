@@ -786,6 +786,9 @@ func upload(provider sdk.Provider, profile, values map[string]string) tea.Cmd {
 		} else if provider == sdk.ProviderCloudinary {
 			key = values["Public ID"]
 		}
+		if provider != sdk.ProviderCloudinary && filepath.Ext(key) == "" {
+			key += filepath.Ext(values["Source file"])
+		}
 		result, err := client.Upload(context.Background(), sdk.UploadRequest{Source: file, Bucket: values["Bucket"], Key: key})
 		return uploadFinishedMsg{url: result.URL, err: err}
 	}
